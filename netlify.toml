@@ -3,8 +3,8 @@
 # =============================================================================
 
 [build]
-  # Build production assets for the React + Vite frontend
-  command = "npm run build:client"
+  # Install client dependencies and build production assets for the React + Vite frontend
+  command = "npm install --prefix client && npm run build:client"
   # Published directory containing built frontend static files
   publish = "client/dist"
   # Directory containing Netlify serverless functions
