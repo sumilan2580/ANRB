@@ -1,0 +1,85 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Node.js & Dependencies
+# ─────────────────────────────────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Environment Variables & Secrets — NEVER COMMIT
+# ─────────────────────────────────────────────────────────────────────────────
+.env
+.env.*
+.env.local
+.env.development
+.env.test
+.env.production
+.env.staging
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Credential Files, Certificates & Keys — NEVER COMMIT
+# ─────────────────────────────────────────────────────────────────────────────
+wallet/
+*.p12
+*.sso
+*.jks
+*.pem
+*.key
+*.cert
+*.crt
+*.pfx
+credentials.json
+tnsnames.ora
+sqlnet.ora
+ewallet.p12
+cwallet.sso
+ojdbc.properties
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SQLite Database Files & Backups (Preserved locally, excluded from Git)
+# ─────────────────────────────────────────────────────────────────────────────
+*.sqlite
+*.sqlite-*
+*.sqlite.*
+tripal_erp.sqlite*
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Database Backups & Data Dumps
+# ─────────────────────────────────────────────────────────────────────────────
+backups/
+*.dump
+*.tar
+*.bak
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Build Outputs & Netlify Artifacts
+# ─────────────────────────────────────────────────────────────────────────────
+dist/
+client/dist/
+manager-app/dist/
+manager-app/android/
+manager-app/.gradle/
+.netlify/
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OS & Editor Files
+# ─────────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Logs & Data Exports
+# ─────────────────────────────────────────────────────────────────────────────
+logs/
+*.log
+exports/*.json
+exports/*.csv
+exports/*.xlsx
+
+exports/
+tripal-manager.apk

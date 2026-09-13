@@ -1,0 +1,1301 @@
+import React, { useState, useEffect } from 'react';
+import { Plus, Edit2, Trash2, RefreshCw, Package, Layers, Users, UserCheck, Cpu, Clock, AlertTriangle, Building2, Save, Key, ShieldCheck, UserPlus, Lock } from 'lucide-react';
+import { api } from '../../api';
+
+// Generic add/edit modal
+function MasterModal({ isOpen, title, fields, initialData, onClose, onSubmit }) {
+  const [formData, setFormData] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState('');
+
+  useEffect(() => {
+    if (isOpen) {
+      const defaults = {};
+      fields.forEach(f => {
+        defaults[f.key] =
+          (initialData && initialData[f.key] !== undefined && initialData[f.key] !== null)
+            ? String(initialData[f.key])
+            : (f.defaultValue || '');
+      });
+      setFormData(defaults);
+      setError('');
+    }
+  }, [isOpen, initialData]);
+
+  if (!isOpen) return null;
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      setLoading(true);
+      setError('');
+      await onSubmit(formData);
+      onClose();
+    } catch (err) {
+      setError(err.message || 'Operation failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal-content" style={{ maxWidth: '480px' }}>
+        <div className="modal-header">
+          <h3>{title}</h3>
+          <button className="modal-close-btn" onClick={onClose}>&times;</button>
+        </div>
+        <form onSubmit={handleSubmit}>
+          <div className="modal-body">
+            {error && (
+              <div style={{ padding: '10px', background: 'var(--rose-bg)', color: 'var(--rose)', border: '1px solid var(--rose)', borderRadius: '6px', marginBottom: '12px', fontSize: '12.5px' }}>
+                {error}
+              </div>
+            )}
+            <div className="form-grid">
+              {fields.map(f => (
+                <div key={f.key} className={`form-group ${f.fullWidth ? 'full-width' : ''}`}>
+                  <label className="form-label">{f.label}</label>
+                  {f.type === 'select' ? (
+                    <select
+                      className="form-select"
+                      value={formData[f.key] || ''}
+                      onChange={e => setFormData({ ...formData, [f.key]: e.target.value })}
+                      required={f.required}
+                    >
+                      {f.options?.map(opt => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  ) : f.type === 'textarea' ? (
+                    <textarea
+                      className="form-textarea"
+                      rows="2"
+                      value={formData[f.key] || ''}
+                      onChange={e => setFormData({ ...formData, [f.key]: e.target.value })}
+                      placeholder={f.placeholder || ''}
+                      required={f.required}
+                    />
+                  ) : (
+                    <input
+                      type={f.type || 'text'}
+                      className="form-input"
+                      value={formData[f.key] || ''}
+                      onChange={e => setFormData({ ...formData, [f.key]: e.target.value })}
+                      placeholder={f.placeholder || ''}
+                      required={f.required}
+                    />
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="modal-footer">
+            <button type="button" className="btn btn-outline" onClick={onClose} disabled={loading}>Cancel</button>
+            <button type="submit" className="btn btn-primary" disabled={loading}>
+              {loading ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// Confirm Delete Modal
+function ConfirmDeleteModal({ isOpen, itemLabel, onClose, onConfirm, loading }) {
+  if (!isOpen) return null;
+  return (
+    <div className="modal-overlay">
+      <div className="modal-content" style={{ maxWidth: '380px' }}>
+        <div className="modal-header">
+          <h3 style={{ color: 'var(--rose)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <AlertTriangle size={18} /> Confirm Delete
+          </h3>
+          <button className="modal-close-btn" onClick={onClose}>&times;</button>
+        </div>
+        <div className="modal-body">
+          <p style={{ color: 'var(--text-muted)', lineHeight: '1.6' }}>
+            Are you sure you want to delete <strong style={{ color: 'var(--text-main)' }}>{itemLabel}</strong>?
+            <br />
+            <span style={{ fontSize: '12px', color: 'var(--rose)' }}>
+              Records with existing transactions cannot be deleted and will be deactivated instead.
+            </span>
+          </p>
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-outline" onClick={onClose} disabled={loading}>Cancel</button>
+          <button
+            className="btn"
+            style={{ background: 'var(--rose)', color: '#fff' }}
+            onClick={onConfirm}
+            disabled={loading}
+          >
+            {loading ? 'Deleting...' : 'Delete'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Small icon action button
+function ActionBtn({ icon, color, title, onClick }) {
+  return (
+    <button
+      title={title}
+      onClick={onClick}
+      style={{
+        background: 'none',
+        border: `1px solid ${color}44`,
+        borderRadius: '6px',
+        color,
+        width: '28px',
+        height: '28px',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: 'pointer',
+        flexShrink: 0,
+        transition: 'all 0.15s',
+      }}
+      onMouseEnter={e => { e.currentTarget.style.background = `${color}22`; e.currentTarget.style.borderColor = color; }}
+      onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.borderColor = `${color}44`; }}
+    >
+      {icon}
+    </button>
+  );
+}
+
+// ============================================================
+//  Masters Page with tabs
+// ============================================================
+export default function MastersPage() {
+  const [tab, setTab]                     = useState('raw-materials');
+  const [rawMaterials, setRawMaterials]   = useState([]);
+  const [finishedGoods, setFinishedGoods] = useState([]);
+  const [customers, setCustomers]         = useState([]);
+  const [suppliers, setSuppliers]         = useState([]);
+  const [machines, setMachines]           = useState([]);
+  const [shifts, setShifts]               = useState([]);
+  const [managers, setManagers]           = useState([]);
+  const [managerUsers, setManagerUsers]   = useState([]);
+  const [showUserModal, setShowUserModal] = useState(false);
+  const [newUserData, setNewUserData]     = useState({ username: '', password: '', display_name: '', phone: '' });
+  const [userLoading, setUserLoading]     = useState(false);
+  const [userError, setUserError]         = useState('');
+  const [resetPwdUser, setResetPwdUser]   = useState(null);
+  const [newPassword, setNewPassword]     = useState('');
+  const [deleteUserTarget, setDeleteUserTarget] = useState(null);
+  const [companySettings, setCompanySettings] = useState({
+    company_name: '',
+    company_gstin: '',
+    company_state: '',
+    company_state_code: '',
+    company_address: '',
+    company_phone: '',
+    company_email: '',
+    bank_name: '',
+    bank_account_no: '',
+    bank_ifsc: '',
+    bank_branch: ''
+  });
+  const [savingCompany, setSavingCompany] = useState(false);
+  const [loading, setLoading]             = useState(true);
+  const [error, setError]                 = useState('');
+  const [successMsg, setSuccessMsg]       = useState('');
+  // Add / Edit modal
+  const [showModal, setShowModal]         = useState(false);
+  const [editRecord, setEditRecord]       = useState(null); // null = add mode
+  // Delete confirm
+  const [deleteTarget, setDeleteTarget]   = useState(null); // { id, label }
+  const [deleteLoading, setDeleteLoading] = useState(false);
+
+  useEffect(() => {
+    loadAll();
+  }, []);
+
+  async function loadAll() {
+    setLoading(true);
+    try {
+      const [rm, fg, cust, supp, mach, sh, mgrs, comp, mgrUsers] = await Promise.all([
+        api.getRawMaterials(),
+        api.getFinishedGoods(),
+        api.getCustomers(),
+        api.getSuppliers(),
+        api.getMachines(),
+        api.getShifts(),
+        api.getManagers(),
+        api.getCompanySettings().catch(() => ({})),
+        api.getManagerUsers().catch(() => [])
+      ]);
+      setRawMaterials(rm);
+      setFinishedGoods(fg);
+      setCustomers(cust);
+      setSuppliers(supp);
+      setMachines(mach);
+      setShifts(sh);
+      setManagers(mgrs);
+      setManagerUsers(mgrUsers || []);
+      if (comp) {
+        setCompanySettings(prev => ({ ...prev, ...comp }));
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const handleCreateManagerUser = async (e) => {
+    e.preventDefault();
+    if (!newUserData.username || !newUserData.password) {
+      setUserError('Username and password are required');
+      return;
+    }
+    setUserLoading(true);
+    setUserError('');
+    try {
+      await api.createManagerUser(newUserData);
+      setShowUserModal(false);
+      setNewUserData({ username: '', password: '', display_name: '', phone: '' });
+      showSuccess('Manager web login account created successfully!');
+      await loadAll();
+    } catch (err) {
+      setUserError(err.message || 'Failed to create manager user');
+    } finally {
+      setUserLoading(false);
+    }
+  };
+
+  const toggleUserStatus = async (user) => {
+    const nextStatus = user.status === 'active' ? 'inactive' : 'active';
+    try {
+      await api.updateManagerUserStatus(user.id, nextStatus);
+      showSuccess(`Manager account ${user.username} status set to ${nextStatus}`);
+      await loadAll();
+    } catch (err) {
+      setError(err.message || 'Failed to update user status');
+    }
+  };
+
+  const handleResetPassword = async (e) => {
+    e.preventDefault();
+    if (!newPassword || newPassword.length < 4) {
+      setUserError('Password must be at least 4 characters');
+      return;
+    }
+    setUserLoading(true);
+    setUserError('');
+    try {
+      await api.resetManagerUserPassword(resetPwdUser.id, newPassword);
+      setResetPwdUser(null);
+      setNewPassword('');
+      showSuccess(`Password for "${resetPwdUser.username}" reset successfully!`);
+    } catch (err) {
+      setUserError(err.message || 'Failed to reset password');
+    } finally {
+      setUserLoading(false);
+    }
+  };
+
+  const executeDeleteUser = async () => {
+    if (!deleteUserTarget) return;
+    setUserLoading(true);
+    try {
+      await api.deleteManagerUser(deleteUserTarget.id);
+      setDeleteUserTarget(null);
+      showSuccess(`Manager login account "${deleteUserTarget.username}" deleted`);
+      await loadAll();
+    } catch (err) {
+      setError(err.message || 'Failed to delete user');
+      setDeleteUserTarget(null);
+    } finally {
+      setUserLoading(false);
+    }
+  };
+
+  const handleSaveCompany = async (e) => {
+    e.preventDefault();
+    setSavingCompany(true);
+    try {
+      const res = await api.updateCompanySettings(companySettings);
+      if (res && res.settings) {
+        setCompanySettings(prev => ({ ...prev, ...res.settings }));
+      }
+      showSuccess('Company profile and tax settings saved successfully!');
+    } catch (err) {
+      setError(err.message || 'Failed to save company settings');
+    } finally {
+      setSavingCompany(false);
+    }
+  };
+
+  const showSuccess = (msg) => {
+    setSuccessMsg(msg);
+    setTimeout(() => setSuccessMsg(''), 3000);
+  };
+
+  const toggleStatus = async (type, id, currentStatus) => {
+    const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
+    try {
+      if (type === 'rm')       await api.updateRawMaterial(id, { status: newStatus });
+      if (type === 'fg')       await api.updateFinishedGood(id, { status: newStatus });
+      if (type === 'customer') await api.updateCustomer(id, { status: newStatus });
+      if (type === 'supplier') await api.updateSupplier(id, { status: newStatus });
+      if (type === 'machine')  await api.updateMachine(id, { status: newStatus });
+      if (type === 'manager')  await api.updateManagerStatus(id, newStatus);
+      await loadAll();
+      showSuccess(`Status updated to ${newStatus}`);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  // Map a DB row to form field keys for editing
+  const editFieldMap = (record) => {
+    if (!record) return {};
+    if (tab === 'raw-materials')  return { name: record.name, category: record.category, unit: record.unit, minStockAlert: record.min_stock_alert, hsnCode: record.hsn_code || '3901', gstPercent: record.gst_percent || '18' };
+    if (tab === 'finished-goods') return { productName: record.product_name, gsm: record.gsm, widthSize: record.width_size, lengthVal: record.length_val, colour: record.colour, grade: record.grade, minStockAlert: record.min_stock_alert, hsnCode: record.hsn_code || '3926', gstPercent: record.gst_percent || '18' };
+    if (tab === 'customers')      return { name: record.name, phone: record.phone, address: record.address, gstNumber: record.gst_number, remarks: record.remarks };
+    if (tab === 'suppliers')      return { name: record.name, phone: record.phone, address: record.address, gstNumber: record.gst_number };
+    if (tab === 'machines')       return { name: record.name, capacityKgPerDay: record.capacity_kg_per_day };
+    if (tab === 'shifts')         return { name: record.name, startTime: record.start_time, endTime: record.end_time };
+    if (tab === 'managers')       return { name: record.name, phone: record.phone };
+    return {};
+  };
+
+  const openEdit = (record) => { setEditRecord(record); setShowModal(true); };
+  const openAdd  = () => { setEditRecord(null); setShowModal(true); };
+
+  // Submit handler (Add or Edit)
+  const handleSubmit = async (data) => {
+    if (editRecord) {
+      if (tab === 'raw-materials')  await api.updateRawMaterial(editRecord.id, data);
+      else if (tab === 'finished-goods') await api.updateFinishedGood(editRecord.id, data);
+      else if (tab === 'customers')      await api.updateCustomer(editRecord.id, data);
+      else if (tab === 'suppliers')      await api.updateSupplier(editRecord.id, data);
+      else if (tab === 'machines')       await api.updateMachine(editRecord.id, data);
+      else if (tab === 'shifts')         await api.updateShift(editRecord.id, data);
+      else if (tab === 'managers')       await api.updateManager(editRecord.id, data);
+      showSuccess('Record updated successfully!');
+    } else {
+      if (tab === 'raw-materials')  await api.createRawMaterial(data);
+      else if (tab === 'finished-goods') await api.createFinishedGood(data);
+      else if (tab === 'customers')      await api.createCustomer(data);
+      else if (tab === 'suppliers')      await api.createSupplier(data);
+      else if (tab === 'machines')       await api.createMachine(data);
+      else if (tab === 'shifts')         await api.createShift(data);
+      else if (tab === 'managers')       await api.createManager(data);
+      showSuccess('Record added successfully!');
+    }
+    await loadAll();
+  };
+
+  const confirmDelete = (id, label) => setDeleteTarget({ id, label });
+
+  const executeDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleteLoading(true);
+    try {
+      const { id } = deleteTarget;
+      if (tab === 'raw-materials')  await api.deleteRawMaterial(id);
+      else if (tab === 'finished-goods') await api.deleteFinishedGood(id);
+      else if (tab === 'customers')      await api.deleteCustomer(id);
+      else if (tab === 'suppliers')      await api.deleteSupplier(id);
+      else if (tab === 'machines')       await api.deleteMachine(id);
+      else if (tab === 'shifts')         await api.deleteShift(id);
+      else if (tab === 'managers')       await api.deleteManager(id);
+      setDeleteTarget(null);
+      await loadAll();
+      showSuccess('Record deleted (or deactivated) successfully!');
+    } catch (err) {
+      setError(err.message);
+      setDeleteTarget(null);
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
+  const TABS = [
+    { id: 'raw-materials', label: 'Raw Materials', icon: <Layers size={14} />, count: rawMaterials.length },
+    { id: 'finished-goods', label: 'Finished Goods', icon: <Package size={14} />, count: finishedGoods.length },
+    { id: 'customers', label: 'Customers', icon: <Users size={14} />, count: customers.length },
+    { id: 'suppliers', label: 'Suppliers', icon: <UserCheck size={14} />, count: suppliers.length },
+    { id: 'machines', label: 'Machines', icon: <Cpu size={14} />, count: machines.length },
+    { id: 'shifts', label: 'Shifts', icon: <Clock size={14} />, count: shifts.length },
+    { id: 'managers', label: 'Managers', icon: <Users size={14} />, count: managers.length + managerUsers.length },
+    { id: 'company', label: 'Company & Tax Settings', icon: <Building2 size={14} /> },
+  ];
+
+  const rmFields = [
+    { key: 'name', label: 'Material Name *', placeholder: 'e.g. LDPE Virgin Grade', required: true },
+    { key: 'category', label: 'Category *', type: 'select', required: true, defaultValue: 'Polymer', options: [
+      { value: 'Polymer', label: 'Polymer' },
+      { value: 'Masterbatch', label: 'Masterbatch' },
+      { value: 'Additive', label: 'Additive' },
+      { value: 'Pigment', label: 'Pigment' },
+      { value: 'Other', label: 'Other' },
+    ]},
+    { key: 'unit', label: 'Unit (माप की इकाई) *', type: 'select', required: true, defaultValue: 'KG', options: [
+      { value: 'KG', label: 'KG — किलोग्राम' },
+      { value: 'PCS', label: 'PCS — पीस / नग' },
+      { value: 'Litre', label: 'Litre — लीटर' },
+      { value: 'Meter', label: 'Meter — मीटर' },
+      { value: 'Bag', label: 'Bag — बोरी / बैग' },
+      { value: 'Roll', label: 'Roll — रोल' },
+    ]},
+    { key: 'hsnCode', label: 'HSN Code', defaultValue: '3901', placeholder: '3901' },
+    { key: 'gstPercent', label: 'GST %', type: 'select', defaultValue: '18', options: [
+      { value: '0', label: '0% (Exempt)' },
+      { value: '5', label: '5%' },
+      { value: '12', label: '12%' },
+      { value: '18', label: '18%' },
+      { value: '28', label: '28%' },
+    ]},
+    { key: 'minStockAlert', label: 'Min Stock Alert', type: 'number', defaultValue: '1000', placeholder: '1000' },
+  ];
+
+  const fgFields = [
+    { key: 'productName', label: 'Product Name', defaultValue: 'Tripal', placeholder: 'Tripal' },
+    { key: 'gsm', label: 'GSM *', type: 'number', required: true, placeholder: 'e.g. 150' },
+    { key: 'widthSize', label: 'Width/Size *', required: true, placeholder: 'e.g. 16 FT' },
+    { key: 'lengthVal', label: 'Length', placeholder: 'e.g. 100 M' },
+    { key: 'colour', label: 'Colour *', required: true, type: 'select', defaultValue: 'Blue', options: [
+      { value: 'Blue', label: 'Blue' },
+      { value: 'Green', label: 'Green' },
+      { value: 'Yellow', label: 'Yellow' },
+      { value: 'Black', label: 'Black' },
+      { value: 'Silver', label: 'Silver' },
+      { value: 'White', label: 'White' },
+      { value: 'Orange', label: 'Orange' },
+      { value: 'Red', label: 'Red' },
+    ]},
+    { key: 'grade', label: 'Grade', defaultValue: 'Grade A', type: 'select', options: [
+      { value: 'Grade A', label: 'Grade A' },
+      { value: 'Heavy Duty', label: 'Heavy Duty' },
+      { value: 'Standard', label: 'Standard' },
+      { value: 'Export Quality', label: 'Export Quality' },
+    ]},
+    { key: 'hsnCode', label: 'HSN Code', defaultValue: '3926', placeholder: '3926' },
+    { key: 'gstPercent', label: 'GST %', type: 'select', defaultValue: '18', options: [
+      { value: '0', label: '0% (Exempt)' },
+      { value: '5', label: '5%' },
+      { value: '12', label: '12%' },
+      { value: '18', label: '18%' },
+      { value: '28', label: '28%' },
+    ]},
+    { key: 'minStockAlert', label: 'Min Stock Alert (KG)', type: 'number', defaultValue: '500', placeholder: '500' },
+  ];
+
+  const custFields = [
+    { key: 'name', label: 'Customer Name *', required: true, placeholder: 'e.g. Kisan Agro Traders' },
+    { key: 'phone', label: 'Phone', placeholder: '+91 98200 12345' },
+    { key: 'address', label: 'Address', placeholder: 'City, State' },
+    { key: 'gstNumber', label: 'GST Number', placeholder: '24AAAXX0000X1Z0' },
+    { key: 'remarks', label: 'Remarks', fullWidth: true, placeholder: 'Optional notes about customer' },
+  ];
+
+  const suppFields = [
+    { key: 'name', label: 'Supplier Name *', required: true, placeholder: 'e.g. Reliance Polymers' },
+    { key: 'phone', label: 'Phone', placeholder: '+91 98200 12345' },
+    { key: 'address', label: 'Address', placeholder: 'Industrial area, City' },
+    { key: 'gstNumber', label: 'GST Number', placeholder: '24AAAXX0000X1Z0' },
+  ];
+
+  const machFields = [
+    { key: 'name', label: 'Machine Name *', required: true, placeholder: 'e.g. Extruder Line 3' },
+    { key: 'capacityKgPerDay', label: 'Capacity KG/Day', type: 'number', defaultValue: '5000', placeholder: '5000' },
+  ];
+
+  const shiftFields = [
+    { key: 'name', label: 'Shift Name *', required: true, placeholder: 'e.g. Morning Shift' },
+    { key: 'startTime', label: 'Start Time', placeholder: '08:00 AM' },
+    { key: 'endTime', label: 'End Time', placeholder: '04:00 PM' },
+  ];
+
+  const mgrFields = [
+    { key: 'name', label: 'Manager Name *', required: true, placeholder: 'e.g. Ramesh Kumar' },
+    { key: 'phone', label: 'Phone', placeholder: '+91 98200 12345' },
+  ];
+
+  const currentFields = () => {
+    if (tab === 'raw-materials')  return rmFields;
+    if (tab === 'finished-goods') return fgFields;
+    if (tab === 'customers')      return custFields;
+    if (tab === 'suppliers')      return suppFields;
+    if (tab === 'machines')       return machFields;
+    if (tab === 'shifts')         return shiftFields;
+    if (tab === 'managers')       return mgrFields;
+    return [];
+  };
+
+  return (
+    <div>
+      <div className="page-header">
+        <div>
+          <h2>Masters Management</h2>
+          <p>Manage raw materials, finished goods, customers, suppliers, machines, shifts, and manager web accounts</p>
+        </div>
+        <div className="header-actions">
+          <button className="btn btn-outline" onClick={loadAll}>
+            <RefreshCw size={14} /> Refresh
+          </button>
+          {tab === 'managers' && (
+            <button className="btn btn-primary" onClick={() => { setShowUserModal(true); setUserError(''); }} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <UserPlus size={14} /> Create Web Account
+            </button>
+          )}
+          {tab !== 'company' && (
+            <button className="btn btn-primary" onClick={openAdd}>
+              <Plus size={14} /> Add New {tab === 'managers' ? 'Floor Manager' : ''}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {successMsg && (
+        <div style={{ background: 'var(--emerald-bg)', border: '1px solid var(--emerald)', color: 'var(--emerald)', padding: '10px 14px', borderRadius: '8px', marginBottom: '14px', fontSize: '13px' }}>
+          ✓ {successMsg}
+        </div>
+      )}
+      {error && (
+        <div style={{ background: 'var(--rose-bg)', border: '1px solid var(--rose)', color: 'var(--rose)', padding: '10px 14px', borderRadius: '8px', marginBottom: '14px', fontSize: '13px' }}>
+          {error}
+          <button onClick={() => setError('')} style={{ marginLeft: '10px', background: 'none', border: 'none', color: 'var(--rose)', cursor: 'pointer' }}>✕</button>
+        </div>
+      )}
+
+      {/* Tab Navigation */}
+      <div style={{ display: 'flex', gap: '4px', marginBottom: '20px', flexWrap: 'wrap', background: 'var(--bg-card)', padding: '6px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', width: 'fit-content' }}>
+        {TABS.map(t => (
+          <button
+            key={t.id}
+            className={`mode-btn ${tab === t.id ? 'active' : ''}`}
+            onClick={() => setTab(t.id)}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+          >
+            {t.icon}
+            {t.label}
+            {t.count !== undefined && (
+              <span style={{ fontSize: '10px', background: 'rgba(255,255,255,0.15)', padding: '1px 5px', borderRadius: '10px' }}>{t.count}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* Tables per tab */}
+      <div className="table-container">
+        {loading ? (
+          <div style={{ padding: '60px', textAlign: 'center', color: 'var(--text-muted)' }}>
+            <RefreshCw size={20} className="animate-spin" style={{ marginRight: '8px' }} />
+            Loading...
+          </div>
+        ) : tab === 'raw-materials' ? (
+          <table className="custom-table">
+            <thead>
+              <tr>
+                <th>Code</th>
+                <th>Name</th>
+                <th>Category</th>
+                <th style={{ textAlign: 'right' }}>Current Stock</th>
+                <th>Min Alert</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rawMaterials.map(rm => (
+                <tr key={rm.id}>
+                  <td><span className="pill pill-cyan num-mono">{rm.code}</span></td>
+                  <td style={{ fontWeight: '600' }}>{rm.name}</td>
+                  <td><span className="pill pill-indigo">{rm.category}</span></td>
+                  <td className="num-mono" style={{ textAlign: 'right', fontWeight: '700', color: rm.current_stock_kg <= rm.min_stock_alert ? 'var(--amber)' : 'var(--text-main)' }}>
+                    {rm.current_stock_kg?.toLocaleString()} <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: '400' }}>{rm.unit || 'KG'}</span>
+                  </td>
+                  <td style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{rm.min_stock_alert?.toLocaleString()} {rm.unit || 'KG'}</td>
+                  <td>
+                    <span className={`pill ${rm.status === 'active' ? 'pill-emerald' : 'pill-rose'}`}>{rm.status}</span>
+                  </td>
+                  <td>
+                    <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                      <button className="btn btn-outline btn-sm" onClick={() => toggleStatus('rm', rm.id, rm.status)}>
+                        {rm.status === 'active' ? 'Deact.' : 'Activate'}
+                      </button>
+                      <ActionBtn icon={<Edit2 size={12} />} color="var(--primary)" title="Edit" onClick={() => openEdit({ ...rm, ...editFieldMap(rm) })} />
+                      <ActionBtn icon={<Trash2 size={12} />} color="var(--rose)" title="Delete" onClick={() => confirmDelete(rm.id, rm.name)} />
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : tab === 'finished-goods' ? (
+          <table className="custom-table">
+            <thead>
+              <tr>
+                <th>Code</th>
+                <th>Product</th>
+                <th>GSM</th>
+                <th>Size</th>
+                <th>Colour</th>
+                <th>Grade</th>
+                <th style={{ textAlign: 'right' }}>Stock KG</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {finishedGoods.map(fg => (
+                <tr key={fg.id}>
+                  <td><span className="pill pill-cyan num-mono">{fg.product_code}</span></td>
+                  <td style={{ fontWeight: '600' }}>{fg.product_name}</td>
+                  <td className="num-mono" style={{ fontWeight: '700' }}>{fg.gsm}</td>
+                  <td>{fg.width_size}</td>
+                  <td>{fg.colour}</td>
+                  <td><span className="pill pill-indigo" style={{ fontSize: '10px' }}>{fg.grade}</span></td>
+                  <td className="num-mono" style={{ textAlign: 'right', fontWeight: '700' }}>{fg.current_stock_kg?.toLocaleString()}</td>
+                  <td><span className={`pill ${fg.status === 'active' ? 'pill-emerald' : 'pill-rose'}`}>{fg.status}</span></td>
+                  <td>
+                    <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                      <button className="btn btn-outline btn-sm" onClick={() => toggleStatus('fg', fg.id, fg.status)}>
+                        {fg.status === 'active' ? 'Deact.' : 'Activate'}
+                      </button>
+                      <ActionBtn icon={<Edit2 size={12} />} color="var(--primary)" title="Edit" onClick={() => openEdit({ ...fg, ...editFieldMap(fg) })} />
+                      <ActionBtn icon={<Trash2 size={12} />} color="var(--rose)" title="Delete" onClick={() => confirmDelete(fg.id, `${fg.product_name} (${fg.gsm}GSM)`)} />
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : tab === 'customers' ? (
+          <table className="custom-table">
+            <thead>
+              <tr>
+                <th>Customer Name</th>
+                <th>Phone</th>
+                <th>GST</th>
+                <th style={{ textAlign: 'right' }}>Total KG</th>
+                <th style={{ textAlign: 'right' }}>Revenue ₹</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {customers.map(c => (
+                <tr key={c.id}>
+                  <td style={{ fontWeight: '600' }}>{c.name}</td>
+                  <td style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{c.phone}</td>
+                  <td><span className="pill pill-indigo" style={{ fontSize: '10px' }}>{c.gst_number || '—'}</span></td>
+                  <td className="num-mono" style={{ textAlign: 'right' }}>{c.total_purchased_kg?.toLocaleString()}</td>
+                  <td className="num-mono" style={{ textAlign: 'right', color: 'var(--emerald)', fontWeight: '600' }}>₹{c.total_sales_amount?.toLocaleString('en-IN')}</td>
+                  <td><span className={`pill ${c.status === 'active' ? 'pill-emerald' : 'pill-rose'}`}>{c.status}</span></td>
+                  <td>
+                    <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                      <button className="btn btn-outline btn-sm" onClick={() => toggleStatus('customer', c.id, c.status)}>
+                        {c.status === 'active' ? 'Deact.' : 'Activate'}
+                      </button>
+                      <ActionBtn icon={<Edit2 size={12} />} color="var(--primary)" title="Edit" onClick={() => openEdit({ ...c, ...editFieldMap(c) })} />
+                      <ActionBtn icon={<Trash2 size={12} />} color="var(--rose)" title="Delete" onClick={() => confirmDelete(c.id, c.name)} />
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : tab === 'suppliers' ? (
+          <table className="custom-table">
+            <thead>
+              <tr>
+                <th>Supplier Name</th>
+                <th>Phone</th>
+                <th>GST</th>
+                <th style={{ textAlign: 'right' }}>Total Supplied KG</th>
+                <th style={{ textAlign: 'right' }}>Total Amount ₹</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {suppliers.map(s => (
+                <tr key={s.id}>
+                  <td style={{ fontWeight: '600' }}>{s.name}</td>
+                  <td style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{s.phone}</td>
+                  <td><span className="pill pill-indigo" style={{ fontSize: '10px' }}>{s.gst_number || '—'}</span></td>
+                  <td className="num-mono" style={{ textAlign: 'right' }}>{s.total_supplied_kg?.toLocaleString()}</td>
+                  <td className="num-mono" style={{ textAlign: 'right', color: 'var(--emerald)' }}>₹{s.total_purchase_amount?.toLocaleString('en-IN')}</td>
+                  <td><span className={`pill ${s.status === 'active' ? 'pill-emerald' : 'pill-rose'}`}>{s.status}</span></td>
+                  <td>
+                    <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                      <button className="btn btn-outline btn-sm" onClick={() => toggleStatus('supplier', s.id, s.status)}>
+                        {s.status === 'active' ? 'Deact.' : 'Activate'}
+                      </button>
+                      <ActionBtn icon={<Edit2 size={12} />} color="var(--primary)" title="Edit" onClick={() => openEdit({ ...s, ...editFieldMap(s) })} />
+                      <ActionBtn icon={<Trash2 size={12} />} color="var(--rose)" title="Delete" onClick={() => confirmDelete(s.id, s.name)} />
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : tab === 'machines' ? (
+          <table className="custom-table">
+            <thead>
+              <tr>
+                <th>Code</th>
+                <th>Machine Name</th>
+                <th>Capacity KG/Day</th>
+                <th>Total Batches</th>
+                <th style={{ textAlign: 'right' }}>Total Produced</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {machines.map(m => (
+                <tr key={m.id}>
+                  <td><span className="pill pill-cyan num-mono">{m.machine_code}</span></td>
+                  <td style={{ fontWeight: '600' }}>{m.name}</td>
+                  <td className="num-mono">{m.capacity_kg_per_day?.toLocaleString()}</td>
+                  <td className="num-mono" style={{ textAlign: 'center' }}>{m.total_batches}</td>
+                  <td className="num-mono" style={{ textAlign: 'right', color: 'var(--emerald)' }}>{m.total_produced_kg?.toLocaleString()} KG</td>
+                  <td><span className={`pill ${m.status === 'active' ? 'pill-emerald' : 'pill-rose'}`}>{m.status}</span></td>
+                  <td>
+                    <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                      <button className="btn btn-outline btn-sm" onClick={() => toggleStatus('machine', m.id, m.status)}>
+                        {m.status === 'active' ? 'Deact.' : 'Activate'}
+                      </button>
+                      <ActionBtn icon={<Edit2 size={12} />} color="var(--primary)" title="Edit" onClick={() => openEdit({ ...m, ...editFieldMap(m) })} />
+                      <ActionBtn icon={<Trash2 size={12} />} color="var(--rose)" title="Delete" onClick={() => confirmDelete(m.id, m.name)} />
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : tab === 'shifts' ? (
+          <table className="custom-table">
+            <thead>
+              <tr>
+                <th>Shift Name</th>
+                <th>Start Time</th>
+                <th>End Time</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shifts.map(s => (
+                <tr key={s.id}>
+                  <td style={{ fontWeight: '600' }}>{s.name}</td>
+                  <td style={{ color: 'var(--text-muted)' }}>{s.start_time}</td>
+                  <td style={{ color: 'var(--text-muted)' }}>{s.end_time}</td>
+                  <td><span className={`pill ${s.status === 'active' ? 'pill-emerald' : 'pill-rose'}`}>{s.status}</span></td>
+                  <td>
+                    <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                      <ActionBtn icon={<Edit2 size={12} />} color="var(--primary)" title="Edit" onClick={() => openEdit({ ...s, ...editFieldMap(s) })} />
+                      <ActionBtn icon={<Trash2 size={12} />} color="var(--rose)" title="Delete" onClick={() => confirmDelete(s.id, s.name)} />
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : tab === 'managers' ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+            {/* Section 1: Manager Web ERP Login Accounts */}
+            <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
+                <div>
+                  <h3 style={{ fontSize: '15px', fontWeight: '700', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <ShieldCheck size={18} style={{ color: 'var(--primary)' }} />
+                    Manager Web ERP Accounts (Role: Manager)
+                  </h3>
+                  <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                    These user accounts log into this Web ERP portal. They have <strong>Entry-Only permissions</strong> (Purchases, Productions, Sales, Invoicing, Receipts). Any Edit or Delete is strictly blocked by API.
+                  </p>
+                </div>
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={() => { setShowUserModal(true); setUserError(''); }}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <UserPlus size={14} /> Create Web Account
+                </button>
+              </div>
+
+              {managerUsers.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)', fontSize: '13px' }}>
+                  No Manager Web Accounts created yet. Click "Create Web Account" above to add a login for floor managers.
+                </div>
+              ) : (
+                <table className="custom-table" style={{ width: '100%' }}>
+                  <thead>
+                    <tr>
+                      <th>Username</th>
+                      <th>Display Name</th>
+                      <th>Role & Permissions</th>
+                      <th>Phone</th>
+                      <th>Status</th>
+                      <th>Created</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {managerUsers.map(u => (
+                      <tr key={u.id}>
+                        <td>
+                          <span className="num-mono" style={{ fontWeight: '700', color: 'var(--primary)' }}>
+                            {u.username}
+                          </span>
+                        </td>
+                        <td style={{ fontWeight: '600' }}>{u.display_name || '—'}</td>
+                        <td>
+                          <span className="pill pill-cyan" style={{ fontSize: '10px' }}>
+                            ENTRY ONLY
+                          </span>
+                        </td>
+                        <td style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{u.phone || '—'}</td>
+                        <td>
+                          <span className={`pill ${u.status === 'active' ? 'pill-emerald' : 'pill-rose'}`}>
+                            {u.status}
+                          </span>
+                        </td>
+                        <td style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
+                          {new Date(u.created_at).toLocaleDateString('en-IN')}
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                            <button
+                              className="btn btn-sm"
+                              style={{
+                                padding: '3px 8px',
+                                fontSize: '11px',
+                                fontWeight: '600',
+                                color: u.status === 'active' ? '#ff6b81' : '#2ed573',
+                                borderColor: u.status === 'active' ? 'rgba(255,107,129,0.3)' : 'rgba(46,213,115,0.3)',
+                                background: 'transparent'
+                              }}
+                              onClick={() => toggleUserStatus(u)}
+                            >
+                              {u.status === 'active' ? 'Deactivate' : 'Activate'}
+                            </button>
+                            <button
+                              className="btn btn-outline btn-sm"
+                              style={{ padding: '3px 8px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                              title="Reset Password"
+                              onClick={() => { setResetPwdUser(u); setNewPassword(''); setUserError(''); }}
+                            >
+                              <Key size={11} /> Reset Pwd
+                            </button>
+                            <ActionBtn
+                              icon={<Trash2 size={12} />}
+                              color="var(--rose)"
+                              title="Delete Web User"
+                              onClick={() => setDeleteUserTarget(u)}
+                            />
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* Section 2: Factory Floor Managers Activity & Profiles */}
+            <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
+                <div>
+                  <h3 style={{ fontSize: '15px', fontWeight: '700', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Users size={18} style={{ color: 'var(--cyan)' }} />
+                    Factory Floor Managers & Production Records
+                  </h3>
+                  <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                    Tracks floor shift managers linked with machine production batches, purchases, and sales.
+                  </p>
+                </div>
+                <button className="btn btn-outline btn-sm" onClick={openAdd}>
+                  <Plus size={14} /> Add Floor Manager
+                </button>
+              </div>
+
+              <table className="custom-table">
+                <thead>
+                  <tr>
+                    <th>Manager Name</th>
+                    <th>Device ID</th>
+                    <th>Phone</th>
+                    <th>Purchase Count</th>
+                    <th>Production Count</th>
+                    <th>Sales Count</th>
+                    <th style={{ textAlign: 'right' }}>Total Production KG</th>
+                    <th>Status</th>
+                    <th>Since</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {managers.map(m => (
+                    <tr key={m.id}>
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '700', fontSize: '12px', color: '#fff', flexShrink: 0 }}>
+                            {m.name.charAt(0).toUpperCase()}
+                          </div>
+                          <span style={{ fontWeight: '600' }}>{m.name}</span>
+                        </div>
+                      </td>
+                      <td><span className="num-mono pill pill-indigo" style={{ fontSize: '10px' }}>{m.device_id || '—'}</span></td>
+                      <td style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{m.phone || '—'}</td>
+                      <td className="num-mono" style={{ textAlign: 'center' }}>{m.purchase_count}</td>
+                      <td className="num-mono" style={{ textAlign: 'center' }}>{m.production_count}</td>
+                      <td className="num-mono" style={{ textAlign: 'center' }}>{m.sales_count}</td>
+                      <td className="num-mono" style={{ textAlign: 'right', color: 'var(--cyan)' }}>{m.total_production_kg?.toLocaleString()}</td>
+                      <td><span className={`pill ${m.status === 'active' ? 'pill-emerald' : 'pill-rose'}`}>{m.status}</span></td>
+                      <td style={{ fontSize: '11px', color: 'var(--text-dim)' }}>{new Date(m.created_at).toLocaleDateString('en-IN')}</td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                          <button
+                            className="btn btn-sm"
+                            style={{
+                              padding: '3px 8px',
+                              fontSize: '11px',
+                              fontWeight: '600',
+                              color: m.status === 'active' ? '#ff6b81' : '#2ed573',
+                              borderColor: m.status === 'active' ? 'rgba(255,107,129,0.3)' : 'rgba(46,213,115,0.3)',
+                              background: 'transparent'
+                            }}
+                            onClick={() => toggleStatus('manager', m.id, m.status)}
+                          >
+                            {m.status === 'active' ? 'Deact.' : 'Activate'}
+                          </button>
+                          <ActionBtn icon={<Edit2 size={12} />} color="var(--primary)" title="Edit" onClick={() => openEdit({ ...m, ...editFieldMap(m) })} />
+                          <ActionBtn icon={<Trash2 size={12} />} color="var(--rose)" title="Delete" onClick={() => confirmDelete(m.id, m.name)} />
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : tab === 'company' ? (
+          <div style={{ padding: '24px', maxWidth: '840px', margin: '0 auto' }}>
+            <form onSubmit={handleSaveCompany}>
+              <div style={{ marginBottom: '24px' }}>
+                <h4 style={{ fontSize: '15px', fontWeight: '700', color: 'var(--text-main)', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Building2 size={16} style={{ color: 'var(--primary)' }} /> Factory / Company Legal Information
+                </h4>
+                <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  This information appears on Tax Invoices, Delivery Challans, E-Way Bills, and E-Invoice NIC payloads.
+                </p>
+              </div>
+
+              <div className="form-grid" style={{ marginBottom: '24px' }}>
+                <div className="form-group full-width">
+                  <label className="form-label">Legal Company Name *</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={companySettings.company_name || ''}
+                    onChange={e => setCompanySettings({ ...companySettings, company_name: e.target.value })}
+                    required
+                    placeholder="e.g. TRIPAL MANUFACTURING PVT. LTD."
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Company GSTIN *</label>
+                  <input
+                    type="text"
+                    className="form-input num-mono"
+                    value={companySettings.company_gstin || ''}
+                    onChange={e => setCompanySettings({ ...companySettings, company_gstin: e.target.value.toUpperCase() })}
+                    required
+                    placeholder="24AAACT1234F1Z5"
+                    maxLength={15}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">State & State Code *</label>
+                  <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '8px' }}>
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={companySettings.company_state || ''}
+                      onChange={e => setCompanySettings({ ...companySettings, company_state: e.target.value })}
+                      required
+                      placeholder="State (e.g. Gujarat)"
+                    />
+                    <input
+                      type="text"
+                      className="form-input num-mono"
+                      value={companySettings.company_state_code || ''}
+                      onChange={e => setCompanySettings({ ...companySettings, company_state_code: e.target.value })}
+                      required
+                      placeholder="Code (24)"
+                      maxLength={2}
+                    />
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Official Phone</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={companySettings.company_phone || ''}
+                    onChange={e => setCompanySettings({ ...companySettings, company_phone: e.target.value })}
+                    placeholder="+91 79 2583 0000"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Accounts / Billing Email</label>
+                  <input
+                    type="email"
+                    className="form-input"
+                    value={companySettings.company_email || ''}
+                    onChange={e => setCompanySettings({ ...companySettings, company_email: e.target.value })}
+                    placeholder="accounts@tripalmanufacturing.com"
+                  />
+                </div>
+
+                <div className="form-group full-width">
+                  <label className="form-label">Registered Factory & Billing Address *</label>
+                  <textarea
+                    className="form-textarea"
+                    rows={3}
+                    value={companySettings.company_address || ''}
+                    onChange={e => setCompanySettings({ ...companySettings, company_address: e.target.value })}
+                    required
+                    placeholder="Plot / Survey No., GIDC Industrial Estate, City, State - PIN"
+                  />
+                </div>
+              </div>
+
+              <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '20px', marginBottom: '24px' }}>
+                <h4 style={{ fontSize: '15px', fontWeight: '700', color: 'var(--text-main)', marginBottom: '4px' }}>
+                  Bank Account Details (Printed on Invoices for Customer NEFT / RTGS)
+                </h4>
+                <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                  Printed on computer generated sales invoices so customers can pay directly into this account.
+                </p>
+              </div>
+
+              <div className="form-grid" style={{ marginBottom: '24px' }}>
+                <div className="form-group">
+                  <label className="form-label">Bank Name</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={companySettings.bank_name || ''}
+                    onChange={e => setCompanySettings({ ...companySettings, bank_name: e.target.value })}
+                    placeholder="State Bank of India"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Bank Account Number</label>
+                  <input
+                    type="text"
+                    className="form-input num-mono"
+                    value={companySettings.bank_account_no || ''}
+                    onChange={e => setCompanySettings({ ...companySettings, bank_account_no: e.target.value })}
+                    placeholder="382910482910"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Bank IFSC Code</label>
+                  <input
+                    type="text"
+                    className="form-input num-mono"
+                    value={companySettings.bank_ifsc || ''}
+                    onChange={e => setCompanySettings({ ...companySettings, bank_ifsc: e.target.value.toUpperCase() })}
+                    placeholder="SBIN0001234"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Branch Name</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={companySettings.bank_branch || ''}
+                    onChange={e => setCompanySettings({ ...companySettings, bank_branch: e.target.value })}
+                    placeholder="Vatva Industrial Estate Branch"
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={savingCompany}
+                  style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 24px', fontSize: '14px' }}
+                >
+                  <Save size={16} />
+                  {savingCompany ? 'Saving Settings...' : 'Save Company Profile'}
+                </button>
+              </div>
+            </form>
+          </div>
+        ) : null}
+      </div>
+
+      {/* Add / Edit Modal */}
+      <MasterModal
+        isOpen={showModal}
+        title={editRecord ? `Edit ${TABS.find(t => t.id === tab)?.label}` : `Add New ${TABS.find(t => t.id === tab)?.label}`}
+        fields={currentFields()}
+        initialData={editRecord ? editFieldMap(editRecord) : null}
+        onClose={() => { setShowModal(false); setEditRecord(null); }}
+        onSubmit={handleSubmit}
+      />
+
+      {/* Confirm Delete Modal */}
+      <ConfirmDeleteModal
+        isOpen={!!deleteTarget}
+        itemLabel={deleteTarget?.label}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={executeDelete}
+        loading={deleteLoading}
+      />
+
+      {/* Create Manager User Modal */}
+      {showUserModal && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '440px' }}>
+            <div className="modal-header">
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <UserPlus size={18} style={{ color: 'var(--primary)' }} />
+                Create Web Manager Login
+              </h3>
+              <button className="modal-close-btn" onClick={() => setShowUserModal(false)}>&times;</button>
+            </div>
+            <form onSubmit={handleCreateManagerUser}>
+              <div className="modal-body">
+                {userError && (
+                  <div style={{ padding: '10px', background: 'var(--rose-bg)', color: 'var(--rose)', border: '1px solid var(--rose)', borderRadius: '6px', marginBottom: '12px', fontSize: '12.5px' }}>
+                    {userError}
+                  </div>
+                )}
+                <div className="form-group" style={{ marginBottom: '12px' }}>
+                  <label className="form-label">Username (Login ID) *</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={newUserData.username}
+                    onChange={e => setNewUserData({ ...newUserData, username: e.target.value })}
+                    placeholder="e.g. manager1"
+                    required
+                  />
+                </div>
+                <div className="form-group" style={{ marginBottom: '12px' }}>
+                  <label className="form-label">Password *</label>
+                  <input
+                    type="password"
+                    className="form-input"
+                    value={newUserData.password}
+                    onChange={e => setNewUserData({ ...newUserData, password: e.target.value })}
+                    placeholder="Set login password"
+                    required
+                  />
+                </div>
+                <div className="form-group" style={{ marginBottom: '12px' }}>
+                  <label className="form-label">Display / Full Name</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={newUserData.display_name}
+                    onChange={e => setNewUserData({ ...newUserData, display_name: e.target.value })}
+                    placeholder="e.g. Ramesh Kumar"
+                  />
+                </div>
+                <div className="form-group" style={{ marginBottom: '12px' }}>
+                  <label className="form-label">Phone Number</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={newUserData.phone}
+                    onChange={e => setNewUserData({ ...newUserData, phone: e.target.value })}
+                    placeholder="+91 98200 12345"
+                  />
+                </div>
+                <div style={{ padding: '10px', background: 'rgba(56,189,248,0.08)', borderRadius: '6px', border: '1px solid rgba(56,189,248,0.2)', fontSize: '11.5px', color: 'var(--text-muted)' }}>
+                  ℹ️ This account will log into the Web ERP with <strong>Manager role (Entry-Only mode)</strong>. Modifying or deleting records is strictly forbidden by server.
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-outline" onClick={() => setShowUserModal(false)} disabled={userLoading}>Cancel</button>
+                <button type="submit" className="btn btn-primary" disabled={userLoading}>
+                  {userLoading ? 'Creating...' : 'Create Account'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Reset Manager Password Modal */}
+      {resetPwdUser && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '380px' }}>
+            <div className="modal-header">
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Key size={18} style={{ color: 'var(--primary)' }} />
+                Reset Manager Password
+              </h3>
+              <button className="modal-close-btn" onClick={() => setResetPwdUser(null)}>&times;</button>
+            </div>
+            <form onSubmit={handleResetPassword}>
+              <div className="modal-body">
+                {userError && (
+                  <div style={{ padding: '10px', background: 'var(--rose-bg)', color: 'var(--rose)', border: '1px solid var(--rose)', borderRadius: '6px', marginBottom: '12px', fontSize: '12.5px' }}>
+                    {userError}
+                  </div>
+                )}
+                <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '14px' }}>
+                  Set a new password for <strong style={{ color: 'var(--text-main)' }}>{resetPwdUser.username}</strong> ({resetPwdUser.display_name || 'Manager'}).
+                </p>
+                <div className="form-group">
+                  <label className="form-label">New Password *</label>
+                  <input
+                    type="password"
+                    className="form-input"
+                    value={newPassword}
+                    onChange={e => setNewPassword(e.target.value)}
+                    placeholder="Enter at least 4 characters"
+                    required
+                  />
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-outline" onClick={() => setResetPwdUser(null)} disabled={userLoading}>Cancel</button>
+                <button type="submit" className="btn btn-primary" disabled={userLoading}>
+                  {userLoading ? 'Saving...' : 'Reset Password'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm Delete Web User Modal */}
+      {deleteUserTarget && (
+        <ConfirmDeleteModal
+          isOpen={true}
+          itemLabel={`Manager Login Account "${deleteUserTarget.username}"`}
+          onClose={() => setDeleteUserTarget(null)}
+          onConfirm={executeDeleteUser}
+          loading={userLoading}
+        />
+      )}
+    </div>
+  );
+}

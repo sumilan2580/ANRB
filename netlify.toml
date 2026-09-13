@@ -1,0 +1,45 @@
+# =============================================================================
+# TRIPAL ERP — Netlify Production Deployment Configuration
+# =============================================================================
+
+[build]
+  # Build production assets for the React + Vite frontend
+  command = "npm run build:client"
+  # Published directory containing built frontend static files
+  publish = "client/dist"
+  # Directory containing Netlify serverless functions
+  functions = "netlify/functions"
+
+[build.environment]
+  # Ensure modern Node.js 22 LTS environment for build & functions
+  NODE_VERSION = "22"
+  NPM_FLAGS = "--include=dev"
+
+[functions]
+  # Serverless function configuration for the Express API
+  node_bundler = "esbuild"
+  external_node_modules = ["pg", "pg-hstore", "oracledb"]
+
+# ── API ROUTING ───────────────────────────────────────────────────────────────
+# Direct all frontend /api/* requests to the Express Netlify Function
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
+  force = true
+
+# ── SPA CLIENT-SIDE ROUTING FALLBACK ──────────────────────────────────────────
+# All other routes serve index.html for client-side React routing
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# ── SECURITY HEADERS ─────────────────────────────────────────────────────────
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"

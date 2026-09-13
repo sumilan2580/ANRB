@@ -1,0 +1,52 @@
+{
+  "name": "tripal-erp",
+  "version": "1.0.0",
+  "description": "Complete Tripal Manufacturing ERP System (Admin Web Panel & Manager Mobile App)",
+  "main": "server/index.js",
+  "scripts": {
+    "server": "node server/index.js",
+    "client": "npm run dev --prefix client",
+    "manager": "npm run dev --prefix manager-app",
+    "dev": "concurrently -k -p \"[{name}]\" -n \"SERVER,ADMIN\" -c \"cyan.bold,green.bold\" \"npm run server\" \"npm run client\"",
+    "build": "npm run build --prefix client && npm run build --prefix manager-app",
+    "build:client": "npm run build --prefix client",
+    "build:manager": "npm run build --prefix manager-app",
+    "build:apk": "npm run build --prefix manager-app && npx --prefix manager-app cap sync android && powershell -Command \"cd manager-app/android; .\\gradlew.bat assembleDebug\"",
+    "db:migrate": "node scripts/safe-migrate.js",
+    "db:migrate:status": "node scripts/safe-migrate.js --status",
+    "db:migrate:create": "node scripts/safe-migrate.js --create",
+    "migrate:dry": "node scripts/migrate-sqlite-to-postgres.js --dry-run",
+    "migrate:postgres": "node scripts/migrate-sqlite-to-postgres.js",
+    "migrate:postgres:dry": "node scripts/migrate-sqlite-to-postgres.js --dry-run",
+    "migrate:oracle": "node scripts/migrate-sqlite-to-oracle.js",
+    "migrate:oracle:dry": "node scripts/migrate-sqlite-to-oracle.js --dry-run",
+    "verify:postgres": "node scripts/postgres-verify.js",
+    "verify:oracle": "node scripts/oracle-verify.js",
+    "export:data": "node scripts/data-export.js",
+    "test:connection": "node scripts/postgres-connection-test.js",
+    "test:connection:oracle": "node scripts/oracle-connection-test.js",
+    "backup": "node scripts/backup-postgres.js",
+    "restore": "node scripts/restore-postgres.js",
+    "test:smoke": "node smoke_test.js",
+    "test:requirements": "node test_20_requirements.js"
+  },
+  "keywords": [
+    "tripal",
+    "manufacturing",
+    "erp",
+    "inventory",
+    "production"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "concurrently": "^10.0.5",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "oracledb": "^7.0.1",
+    "pg": "^8.23.0",
+    "serverless-http": "^4.0.0"
+  }
+}
