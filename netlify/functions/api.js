@@ -1,5 +1,11 @@
 'use strict';
 
+// Strictly limit database pool in serverless Lambda to prevent max_client_conn exhaustion
+process.env.NETLIFY = 'true';
+process.env.PGPOOL_MAX = '1';
+process.env.PGPOOL_MIN = '0';
+process.env.PGPOOL_IDLE_TIMEOUT = '1000';
+
 /**
  * TRIPAL ERP — Netlify Serverless Function Entry Point
  *

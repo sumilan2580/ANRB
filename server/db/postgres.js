@@ -47,8 +47,8 @@ function buildPoolConfig() {
 
   // In cloud poolers like Layerbase, prevent max_client_conn exhaustion
   const defaultMin = '0';
-  const defaultMax = isServerless ? '2' : '3';
-  const defaultIdle = isServerless ? '3000' : '10000';
+  const defaultMax = isServerless ? '1' : '3';
+  const defaultIdle = isServerless ? '1000' : '10000';
   const connectionTimeoutMillis = parseInt(process.env.PGPOOL_CONNECT_TIMEOUT || '15000', 10);
 
   const poolMin = parseInt(process.env.PGPOOL_MIN || defaultMin, 10);

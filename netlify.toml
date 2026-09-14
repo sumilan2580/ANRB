@@ -14,11 +14,19 @@
   # Ensure modern Node.js 22 LTS environment for build & functions
   NODE_VERSION = "22"
   NPM_FLAGS = "--include=dev"
+  PGPOOL_MAX = "1"
+  PGPOOL_MIN = "0"
+  PGPOOL_IDLE_TIMEOUT = "1000"
 
 [functions]
   # Serverless function configuration for the Express API
   node_bundler = "esbuild"
   external_node_modules = ["pg", "pg-hstore", "oracledb"]
+
+[functions.environment]
+  PGPOOL_MAX = "1"
+  PGPOOL_MIN = "0"
+  PGPOOL_IDLE_TIMEOUT = "1000"
 
 # ── API ROUTING ───────────────────────────────────────────────────────────────
 # Direct all frontend /api/* requests to the Express Netlify Function
