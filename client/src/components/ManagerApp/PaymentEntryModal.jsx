@@ -142,9 +142,27 @@ export default function PaymentEntryModal({ isOpen, defaultType = 'CUSTOMER', ma
         <form onSubmit={handleSubmit}>
           <div className="modal-body">
             {error && (
-              <div style={{ padding: '10px 12px', background: 'var(--rose-bg)', border: '1px solid var(--rose)', color: 'var(--rose)', borderRadius: '8px', fontSize: '12.5px', marginBottom: '14px', display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
-                <ShieldAlert size={18} style={{ flexShrink: 0, marginTop: '2px' }} />
-                <div>{error}</div>
+              <div style={{ padding: '10px 12px', background: 'var(--rose-bg)', border: '1px solid var(--rose)', color: 'var(--rose)', borderRadius: '8px', fontSize: '12.5px', marginBottom: '14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <ShieldAlert size={18} style={{ flexShrink: 0 }} />
+                  <div>{error}</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setError(''); loadParties(); }}
+                  style={{
+                    padding: '4px 10px',
+                    fontSize: '11.5px',
+                    fontWeight: '700',
+                    background: 'var(--rose)',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Retry
+                </button>
               </div>
             )}
 
