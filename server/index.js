@@ -529,39 +529,54 @@ app.get('/api/dashboard/stats', requireAdmin, async (req, res) => {
       last7Days.push(d);
     }
 
-    const rmTrend = await Promise.all(last7Days.map(async dateStr => {
-      const row = (await db.prepare(`
-        SELECT COALESCE(SUM(quantity_kg), 0) as kg, COALESCE(SUM(total_amount), 0) as amount
-        FROM raw_material_purchases
-        WHERE date = ?
-      `).get(dateStr)) || { kg: 0, amount: 0 };
-      return { date: dateStr.slice(5), kg: Number(row.kg), amount: Number(row.amount) };
-    }));
+    const minDate = last7Days[0];
 
-    const prodTrend = await Promise.all(last7Days.map(async dateStr => {
-      const row = (await db.prepare(`
-        SELECT COALESCE(SUM(raw_material_used_kg), 0) as rm_used,
-               COALESCE(SUM(total_finished_kg), 0) as finished_kg,
-               COALESCE(SUM(total_wastage_kg), 0) as wastage_kg
-        FROM production_batches
-        WHERE date = ?
-      `).get(dateStr)) || { rm_used: 0, finished_kg: 0, wastage_kg: 0 };
+    const rawRm = (await db.prepare(`
+      SELECT date, COALESCE(SUM(quantity_kg), 0) as kg, COALESCE(SUM(total_amount), 0) as amount
+      FROM raw_material_purchases
+      WHERE date >= ?
+      GROUP BY date
+    `).all(minDate)) || [];
+    const rmMap = new Map(rawRm.map(r => [r.date, r]));
+
+    const rmTrend = last7Days.map(dateStr => {
+      const row = rmMap.get(dateStr) || { kg: 0, amount: 0 };
+      return { date: dateStr.slice(5), kg: Number(row.kg || 0), amount: Number(row.amount || 0) };
+    });
+
+    const rawProd = (await db.prepare(`
+      SELECT date,
+             COALESCE(SUM(raw_material_used_kg), 0) as rm_used,
+             COALESCE(SUM(total_finished_kg), 0) as finished_kg,
+             COALESCE(SUM(total_wastage_kg), 0) as wastage_kg
+      FROM production_batches
+      WHERE date >= ?
+      GROUP BY date
+    `).all(minDate)) || [];
+    const prodMap = new Map(rawProd.map(r => [r.date, r]));
+
+    const prodTrend = last7Days.map(dateStr => {
+      const row = prodMap.get(dateStr) || { rm_used: 0, finished_kg: 0, wastage_kg: 0 };
       return {
         date: dateStr.slice(5),
-        rmUsed: Number(row.rm_used),
-        finishedKg: Number(row.finished_kg),
-        wastageKg: Number(row.wastage_kg)
+        rmUsed: Number(row.rm_used || 0),
+        finishedKg: Number(row.finished_kg || 0),
+        wastageKg: Number(row.wastage_kg || 0)
       };
-    }));
+    });
 
-    const salesTrend = await Promise.all(last7Days.map(async dateStr => {
-      const row = (await db.prepare(`
-        SELECT COALESCE(SUM(quantity_kg), 0) as kg, COALESCE(SUM(total_amount), 0) as amount
-        FROM sales
-        WHERE date = ?
-      `).get(dateStr)) || { kg: 0, amount: 0 };
-      return { date: dateStr.slice(5), kg: Number(row.kg), amount: Number(row.amount) };
-    }));
+    const rawSales = (await db.prepare(`
+      SELECT date, COALESCE(SUM(quantity_kg), 0) as kg, COALESCE(SUM(total_amount), 0) as amount
+      FROM sales
+      WHERE date >= ?
+      GROUP BY date
+    `).all(minDate)) || [];
+    const salesMap = new Map(rawSales.map(r => [r.date, r]));
+
+    const salesTrend = last7Days.map(dateStr => {
+      const row = salesMap.get(dateStr) || { kg: 0, amount: 0 };
+      return { date: dateStr.slice(5), kg: Number(row.kg || 0), amount: Number(row.amount || 0) };
+    });
 
     // 9. Wastage Reason Breakdown
     const wastageReasons = await db.prepare(`

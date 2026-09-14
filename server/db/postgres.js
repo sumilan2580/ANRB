@@ -40,19 +40,20 @@ function buildPoolConfig() {
   const isServerless = Boolean(
     process.env.NETLIFY ||
     process.env.AWS_LAMBDA_FUNCTION_NAME ||
-    process.env.LAMBDA_TASK_ROOT
+    process.env.LAMBDA_TASK_ROOT ||
+    process.env.AWS_EXECUTION_ENV ||
+    process.env.CONTEXT
   );
 
-  // In serverless, minimize idle connections and cap max pool per lambda to prevent exhaustion
-  const defaultMin = isServerless ? '0' : '1';
-  const defaultMax = isServerless ? '3' : '10';
-  const defaultIdle = isServerless ? '10000' : '30000';
+  // In cloud poolers like Layerbase, prevent max_client_conn exhaustion
+  const defaultMin = '0';
+  const defaultMax = isServerless ? '2' : '3';
+  const defaultIdle = isServerless ? '3000' : '10000';
+  const connectionTimeoutMillis = parseInt(process.env.PGPOOL_CONNECT_TIMEOUT || '15000', 10);
 
   const poolMin = parseInt(process.env.PGPOOL_MIN || defaultMin, 10);
   const poolMax = parseInt(process.env.PGPOOL_MAX || defaultMax, 10);
   const idleTimeoutMillis = parseInt(process.env.PGPOOL_IDLE_TIMEOUT || defaultIdle, 10);
-  // Default connection timeout to 30s to withstand remote cloud pooler handshake latency
-  const connectionTimeoutMillis = parseInt(process.env.PGPOOL_CONNECT_TIMEOUT || '30000', 10);
 
   const baseConfig = {
     ssl: sslConfig,
@@ -61,7 +62,7 @@ function buildPoolConfig() {
     idleTimeoutMillis,
     connectionTimeoutMillis,
     keepAlive: true,
-    keepAliveInitialDelayMillis: 10000
+    keepAliveInitialDelayMillis: 5000
   };
 
   if (connectionString) {

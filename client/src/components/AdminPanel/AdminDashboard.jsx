@@ -167,7 +167,20 @@ export default function AdminDashboard() {
     );
   }
 
-  if (!stats) return null;
+  if (!stats) {
+    return (
+      <div style={{ padding: '40px 20px', textAlign: 'center' }}>
+        <div style={{ maxWidth: '440px', margin: '0 auto', padding: '24px', background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '12px' }}>
+          <AlertTriangle size={36} color="var(--rose)" style={{ marginBottom: '12px' }} />
+          <h3 style={{ fontSize: '16px', fontWeight: '600', color: 'var(--text-main)', marginBottom: '8px' }}>Failed to load dashboard</h3>
+          <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '16px' }}>Could not retrieve factory statistics. Please check your connection and try again.</p>
+          <button className="btn btn-primary" onClick={loadStats}>
+            <RefreshCw size={14} /> Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const rmStock = stats.rawMaterialStockKg;
   const fgStock = stats.finishedGoodsStockKg;
