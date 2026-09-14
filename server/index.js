@@ -4123,71 +4123,109 @@ app.get(['/api/accounts/cash-ledger', '/api/accounts/cash-book'], async (req, re
   try {
     const { dateFrom, dateTo } = req.query;
 
-    // Inflows: Cash Sales + Customer Cash Receipts
-    let salesQuery = "SELECT id, date, invoice_number as doc_no, sale_code, total_amount as amount, 'CASH_SALE' as trans_type, 'Cash Sale' as description, created_at FROM sales WHERE payment_type = 'Cash' AND is_voided = 0";
-    const salesParams = [];
-    if (dateFrom) { salesQuery += ' AND date >= ?'; salesParams.push(dateFrom); }
-    if (dateTo) { salesQuery += ' AND date <= ?'; salesParams.push(dateTo); }
-    const cashSales = (await db.prepare(salesQuery).all(...salesParams)).map(r => ({
-      id: `csale-${r.id}`,
-      date: r.date,
-      doc_no: r.doc_no || r.sale_code,
-      type: 'INFLOW',
-      category: 'Cash Sale',
-      description: r.description,
-      inflow: Number(r.amount.toFixed(2)),
-      outflow: 0,
-      created_at: r.created_at
-    }));
-
-    let recQuery = "SELECT p.id, p.date, p.reference_no as doc_no, p.payment_code, p.amount, c.name as party_name, p.remarks, p.created_at FROM payments p JOIN customers c ON p.party_id = c.id WHERE p.party_type = 'CUSTOMER' AND p.payment_mode = 'Cash' AND p.is_voided = 0";
+    // Inflows: Cash Receipts + Non-duplicate Cash Sales
+    let recQuery = "SELECT p.id, p.date, p.reference_no, p.reference_no as doc_no, p.payment_code, p.amount, c.name as party_name, p.remarks, p.created_at, p.party_id FROM payments p JOIN customers c ON p.party_id = c.id WHERE p.party_type = 'CUSTOMER' AND p.payment_mode = 'Cash' AND p.is_voided = 0";
     const recParams = [];
     if (dateFrom) { recQuery += ' AND p.date >= ?'; recParams.push(dateFrom); }
     if (dateTo) { recQuery += ' AND p.date <= ?'; recParams.push(dateTo); }
-    const cashReceipts = (await db.prepare(recQuery).all(...recParams)).map(r => ({
-      id: `crec-${r.id}`,
-      date: r.date,
-      doc_no: r.doc_no || r.payment_code,
-      type: 'INFLOW',
-      category: 'Customer Receipt',
-      description: `Receipt from ${r.party_name} ${r.remarks ? `(${r.remarks})` : ''}`,
-      inflow: Number(r.amount.toFixed(2)),
-      outflow: 0,
-      created_at: r.created_at
-    }));
+    const rawRecs = await db.prepare(recQuery).all(...recParams);
 
-    // Outflows: Cash Purchases + Supplier Cash Payments
-    let purQuery = "SELECT id, date, invoice_number as doc_no, purchase_code, total_amount as amount, 'CASH_PURCHASE' as trans_type, 'Cash RM Purchase' as description, created_at FROM raw_material_purchases WHERE payment_mode = 'Cash' AND is_voided = 0";
-    const purParams = [];
-    if (dateFrom) { purQuery += ' AND date >= ?'; purParams.push(dateFrom); }
-    if (dateTo) { purQuery += ' AND date <= ?'; purParams.push(dateTo); }
-    const cashPurchases = (await db.prepare(purQuery).all(...purParams)).map(r => ({
-      id: `cpur-${r.id}`,
-      date: r.date,
-      doc_no: r.doc_no || r.purchase_code,
-      type: 'OUTFLOW',
-      category: 'Cash Purchase',
-      description: r.description,
-      inflow: 0,
-      outflow: Number(r.amount.toFixed(2)),
-      created_at: r.created_at
-    }));
+    let salesQuery = "SELECT id, date, invoice_number, invoice_number as doc_no, sale_code, total_amount as amount, customer_id, 'CASH_SALE' as trans_type, 'Cash Sale' as description, created_at FROM sales WHERE payment_type = 'Cash' AND is_voided = 0";
+    const salesParams = [];
+    if (dateFrom) { salesQuery += ' AND date >= ?'; salesParams.push(dateFrom); }
+    if (dateTo) { salesQuery += ' AND date <= ?'; salesParams.push(dateTo); }
+    const rawSales = await db.prepare(salesQuery).all(...salesParams);
 
-    let payQuery = "SELECT p.id, p.date, p.reference_no as doc_no, p.payment_code, p.amount, s.name as party_name, p.remarks, p.created_at FROM payments p JOIN suppliers s ON p.party_id = s.id WHERE p.party_type = 'SUPPLIER' AND p.payment_mode = 'Cash' AND p.is_voided = 0";
+    // Prevent double counting: If receipt references invoice or matches customer, amount and date,
+    // count via receipt and exclude duplicate sale
+    const matchedSaleIds = new Set();
+    const cashReceipts = rawRecs.map(p => {
+      const matchingSale = rawSales.find(s =>
+        !matchedSaleIds.has(s.id) && (
+          (p.reference_no && (p.reference_no.trim().toLowerCase() === (s.invoice_number || '').trim().toLowerCase() || p.reference_no.trim().toLowerCase() === (s.sale_code || '').trim().toLowerCase())) ||
+          (Number(p.party_id) === Number(s.customer_id) && Math.abs(Number(p.amount) - Number(s.amount)) < 0.01 && p.date === s.date)
+        )
+      );
+      if (matchingSale) {
+        matchedSaleIds.add(matchingSale.id);
+      }
+      return {
+        id: `crec-${p.id}`,
+        date: p.date,
+        doc_no: p.doc_no || p.payment_code,
+        type: 'INFLOW',
+        category: 'Customer Receipt',
+        description: `Receipt from ${p.party_name}${p.remarks ? ` (${p.remarks})` : ''}`,
+        inflow: Number(Number(p.amount).toFixed(2)),
+        outflow: 0,
+        created_at: p.created_at
+      };
+    });
+
+    const cashSales = rawSales
+      .filter(s => !matchedSaleIds.has(s.id))
+      .map(r => ({
+        id: `csale-${r.id}`,
+        date: r.date,
+        doc_no: r.doc_no || r.sale_code,
+        type: 'INFLOW',
+        category: 'Cash Sale',
+        description: r.description,
+        inflow: Number(Number(r.amount).toFixed(2)),
+        outflow: 0,
+        created_at: r.created_at
+      }));
+
+    // Outflows: Cash Supplier Payments + Non-duplicate Cash Purchases
+    let payQuery = "SELECT p.id, p.date, p.reference_no, p.reference_no as doc_no, p.payment_code, p.amount, s.name as party_name, p.remarks, p.created_at, p.party_id FROM payments p JOIN suppliers s ON p.party_id = s.id WHERE p.party_type = 'SUPPLIER' AND p.payment_mode = 'Cash' AND p.is_voided = 0";
     const payParams = [];
     if (dateFrom) { payQuery += ' AND p.date >= ?'; payParams.push(dateFrom); }
     if (dateTo) { payQuery += ' AND p.date <= ?'; payParams.push(dateTo); }
-    const cashPayments = (await db.prepare(payQuery).all(...payParams)).map(r => ({
-      id: `cpay-${r.id}`,
-      date: r.date,
-      doc_no: r.doc_no || r.payment_code,
-      type: 'OUTFLOW',
-      category: 'Supplier Payment',
-      description: `Payment to ${r.party_name} ${r.remarks ? `(${r.remarks})` : ''}`,
-      inflow: 0,
-      outflow: Number(r.amount.toFixed(2)),
-      created_at: r.created_at
-    }));
+    const rawPays = await db.prepare(payQuery).all(...payParams);
+
+    let purQuery = "SELECT id, date, invoice_number, invoice_number as doc_no, purchase_code, total_amount as amount, supplier_id, 'CASH_PURCHASE' as trans_type, 'Cash RM Purchase' as description, created_at FROM raw_material_purchases WHERE payment_mode = 'Cash' AND is_voided = 0";
+    const purParams = [];
+    if (dateFrom) { purQuery += ' AND date >= ?'; purParams.push(dateFrom); }
+    if (dateTo) { purQuery += ' AND date <= ?'; purParams.push(dateTo); }
+    const rawPurs = await db.prepare(purQuery).all(...purParams);
+
+    const matchedPurIds = new Set();
+    const cashPayments = rawPays.map(p => {
+      const matchingPur = rawPurs.find(pur =>
+        !matchedPurIds.has(pur.id) && (
+          (p.reference_no && (p.reference_no.trim().toLowerCase() === (pur.invoice_number || '').trim().toLowerCase() || p.reference_no.trim().toLowerCase() === (pur.purchase_code || '').trim().toLowerCase())) ||
+          (Number(p.party_id) === Number(pur.supplier_id) && Math.abs(Number(p.amount) - Number(pur.amount)) < 0.01 && p.date === pur.date)
+        )
+      );
+      if (matchingPur) {
+        matchedPurIds.add(matchingPur.id);
+      }
+      return {
+        id: `cpay-${p.id}`,
+        date: p.date,
+        doc_no: p.doc_no || p.payment_code,
+        type: 'OUTFLOW',
+        category: 'Supplier Payment',
+        description: `Payment to ${p.party_name}${p.remarks ? ` (${p.remarks})` : ''}`,
+        inflow: 0,
+        outflow: Number(Number(p.amount).toFixed(2)),
+        created_at: p.created_at
+      };
+    });
+
+    const cashPurchases = rawPurs
+      .filter(pur => !matchedPurIds.has(pur.id))
+      .map(r => ({
+        id: `cpur-${r.id}`,
+        date: r.date,
+        doc_no: r.doc_no || r.purchase_code,
+        type: 'OUTFLOW',
+        category: 'Cash Purchase',
+        description: r.description,
+        inflow: 0,
+        outflow: Number(Number(r.amount).toFixed(2)),
+        created_at: r.created_at
+      }));
 
     const allCash = [...cashSales, ...cashReceipts, ...cashPurchases, ...cashPayments].sort((a, b) => {
       const cmp = a.date.localeCompare(b.date);
@@ -4227,75 +4265,111 @@ app.get('/api/accounts/bank-ledger', async (req, res) => {
   try {
     const { dateFrom, dateTo } = req.query;
 
-    // Inflows: Bank Sales + Customer Bank/UPI/Cheque Receipts
-    let salesQuery = "SELECT id, date, invoice_number as doc_no, sale_code, total_amount as amount, created_at FROM sales WHERE payment_type = 'Bank' AND is_voided = 0";
-    const salesParams = [];
-    if (dateFrom) { salesQuery += ' AND date >= ?'; salesParams.push(dateFrom); }
-    if (dateTo) { salesQuery += ' AND date <= ?'; salesParams.push(dateTo); }
-    const bankSales = (await db.prepare(salesQuery).all(...salesParams)).map(r => ({
-      id: `bsale-${r.id}`,
-      date: r.date,
-      doc_no: r.doc_no || r.sale_code,
-      type: 'INFLOW',
-      category: 'Bank Sale',
-      description: 'Bank Sale Direct Credit',
-      mode: 'Bank Transfer',
-      inflow: Number(r.amount.toFixed(2)),
-      outflow: 0,
-      created_at: r.created_at
-    }));
-
-    let recQuery = "SELECT p.id, p.date, p.reference_no as doc_no, p.payment_code, p.payment_mode, p.amount, c.name as party_name, p.remarks, p.created_at FROM payments p JOIN customers c ON p.party_id = c.id WHERE p.party_type = 'CUSTOMER' AND p.payment_mode != 'Cash' AND p.is_voided = 0";
+    // Inflows: Bank Receipts + Non-duplicate Bank Sales
+    let recQuery = "SELECT p.id, p.date, p.reference_no, p.reference_no as doc_no, p.payment_code, p.payment_mode, p.amount, c.name as party_name, p.remarks, p.created_at, p.party_id FROM payments p JOIN customers c ON p.party_id = c.id WHERE p.party_type = 'CUSTOMER' AND p.payment_mode != 'Cash' AND p.is_voided = 0";
     const recParams = [];
     if (dateFrom) { recQuery += ' AND p.date >= ?'; recParams.push(dateFrom); }
     if (dateTo) { recQuery += ' AND p.date <= ?'; recParams.push(dateTo); }
-    const bankReceipts = (await db.prepare(recQuery).all(...recParams)).map(r => ({
-      id: `brec-${r.id}`,
-      date: r.date,
-      doc_no: r.doc_no || r.payment_code,
-      type: 'INFLOW',
-      category: 'Customer Receipt',
-      description: `Receipt from ${r.party_name} ${r.remarks ? `(${r.remarks})` : ''}`,
-      mode: r.payment_mode || 'Bank',
-      inflow: Number(r.amount.toFixed(2)),
-      outflow: 0,
-      created_at: r.created_at
-    }));
+    const rawBankRecs = await db.prepare(recQuery).all(...recParams);
 
-    // Outflows: Bank Purchases + Supplier Bank Payments
-    let purQuery = "SELECT id, date, invoice_number as doc_no, purchase_code, total_amount as amount, created_at FROM raw_material_purchases WHERE payment_mode = 'Bank' AND is_voided = 0";
-    const purParams = [];
-    if (dateFrom) { purQuery += ' AND date >= ?'; purParams.push(dateFrom); }
-    if (dateTo) { purQuery += ' AND date <= ?'; purParams.push(dateTo); }
-    const bankPurchases = (await db.prepare(purQuery).all(...purParams)).map(r => ({
-      id: `bpur-${r.id}`,
-      date: r.date,
-      doc_no: r.doc_no || r.purchase_code,
-      type: 'OUTFLOW',
-      category: 'Bank Purchase',
-      description: 'Bank RM Purchase Direct Debit',
-      mode: 'Bank Transfer',
-      inflow: 0,
-      outflow: Number(r.amount.toFixed(2)),
-      created_at: r.created_at
-    }));
+    let salesQuery = "SELECT id, date, invoice_number, invoice_number as doc_no, sale_code, total_amount as amount, customer_id, created_at FROM sales WHERE payment_type = 'Bank' AND is_voided = 0";
+    const salesParams = [];
+    if (dateFrom) { salesQuery += ' AND date >= ?'; salesParams.push(dateFrom); }
+    if (dateTo) { salesQuery += ' AND date <= ?'; salesParams.push(dateTo); }
+    const rawBankSales = await db.prepare(salesQuery).all(...salesParams);
 
-    let payQuery = "SELECT p.id, p.date, p.reference_no as doc_no, p.payment_code, p.payment_mode, p.amount, s.name as party_name, p.remarks, p.created_at FROM payments p JOIN suppliers s ON p.party_id = s.id WHERE p.party_type = 'SUPPLIER' AND p.payment_mode != 'Cash' AND p.is_voided = 0";
+    const matchedBankSaleIds = new Set();
+    const bankReceipts = rawBankRecs.map(r => {
+      const matchingSale = rawBankSales.find(s =>
+        !matchedBankSaleIds.has(s.id) && (
+          (r.reference_no && (r.reference_no.trim().toLowerCase() === (s.invoice_number || '').trim().toLowerCase() || r.reference_no.trim().toLowerCase() === (s.sale_code || '').trim().toLowerCase())) ||
+          (Number(r.party_id) === Number(s.customer_id) && Math.abs(Number(r.amount) - Number(s.amount)) < 0.01 && r.date === s.date)
+        )
+      );
+      if (matchingSale) {
+        matchedBankSaleIds.add(matchingSale.id);
+      }
+      return {
+        id: `brec-${r.id}`,
+        date: r.date,
+        doc_no: r.doc_no || r.payment_code,
+        type: 'INFLOW',
+        category: 'Customer Receipt',
+        description: `Receipt from ${r.party_name}${r.remarks ? ` (${r.remarks})` : ''}`,
+        mode: r.payment_mode || 'Bank',
+        inflow: Number(Number(r.amount).toFixed(2)),
+        outflow: 0,
+        created_at: r.created_at
+      };
+    });
+
+    const bankSales = rawBankSales
+      .filter(s => !matchedBankSaleIds.has(s.id))
+      .map(r => ({
+        id: `bsale-${r.id}`,
+        date: r.date,
+        doc_no: r.doc_no || r.sale_code,
+        type: 'INFLOW',
+        category: 'Bank Sale',
+        description: 'Bank Sale Direct Credit',
+        mode: 'Bank Transfer',
+        inflow: Number(Number(r.amount).toFixed(2)),
+        outflow: 0,
+        created_at: r.created_at
+      }));
+
+    // Outflows: Bank Supplier Payments + Non-duplicate Bank Purchases
+    let payQuery = "SELECT p.id, p.date, p.reference_no, p.reference_no as doc_no, p.payment_code, p.payment_mode, p.amount, s.name as party_name, p.remarks, p.created_at, p.party_id FROM payments p JOIN suppliers s ON p.party_id = s.id WHERE p.party_type = 'SUPPLIER' AND p.payment_mode != 'Cash' AND p.is_voided = 0";
     const payParams = [];
     if (dateFrom) { payQuery += ' AND p.date >= ?'; payParams.push(dateFrom); }
     if (dateTo) { payQuery += ' AND p.date <= ?'; payParams.push(dateTo); }
-    const bankPayments = (await db.prepare(payQuery).all(...payParams)).map(r => ({
-      id: `bpay-${r.id}`,
-      date: r.date,
-      doc_no: r.doc_no || r.payment_code,
-      type: 'OUTFLOW',
-      category: 'Supplier Payment',
-      description: `Payment to ${r.party_name} ${r.remarks ? `(${r.remarks})` : ''}`,
-      mode: r.payment_mode || 'Bank',
-      inflow: 0,
-      outflow: Number(r.amount.toFixed(2)),
-      created_at: r.created_at
-    }));
+    const rawBankPays = await db.prepare(payQuery).all(...payParams);
+
+    let purQuery = "SELECT id, date, invoice_number, invoice_number as doc_no, purchase_code, total_amount as amount, supplier_id, created_at FROM raw_material_purchases WHERE payment_mode = 'Bank' AND is_voided = 0";
+    const purParams = [];
+    if (dateFrom) { purQuery += ' AND date >= ?'; purParams.push(dateFrom); }
+    if (dateTo) { purQuery += ' AND date <= ?'; purParams.push(dateTo); }
+    const rawBankPurs = await db.prepare(purQuery).all(...purParams);
+
+    const matchedBankPurIds = new Set();
+    const bankPayments = rawBankPays.map(r => {
+      const matchingPur = rawBankPurs.find(p =>
+        !matchedBankPurIds.has(p.id) && (
+          (r.reference_no && (r.reference_no.trim().toLowerCase() === (p.invoice_number || '').trim().toLowerCase() || r.reference_no.trim().toLowerCase() === (p.purchase_code || '').trim().toLowerCase())) ||
+          (Number(r.party_id) === Number(p.supplier_id) && Math.abs(Number(r.amount) - Number(p.amount)) < 0.01 && r.date === p.date)
+        )
+      );
+      if (matchingPur) {
+        matchedBankPurIds.add(matchingPur.id);
+      }
+      return {
+        id: `bpay-${r.id}`,
+        date: r.date,
+        doc_no: r.doc_no || r.payment_code,
+        type: 'OUTFLOW',
+        category: 'Supplier Payment',
+        description: `Payment to ${r.party_name}${r.remarks ? ` (${r.remarks})` : ''}`,
+        mode: r.payment_mode || 'Bank',
+        inflow: 0,
+        outflow: Number(Number(r.amount).toFixed(2)),
+        created_at: r.created_at
+      };
+    });
+
+    const bankPurchases = rawBankPurs
+      .filter(p => !matchedBankPurIds.has(p.id))
+      .map(r => ({
+        id: `bpur-${r.id}`,
+        date: r.date,
+        doc_no: r.doc_no || r.purchase_code,
+        type: 'OUTFLOW',
+        category: 'Bank Purchase',
+        description: 'Bank RM Purchase Direct Debit',
+        mode: 'Bank Transfer',
+        inflow: 0,
+        outflow: Number(Number(r.amount).toFixed(2)),
+        created_at: r.created_at
+      }));
 
     const allBank = [...bankSales, ...bankReceipts, ...bankPurchases, ...bankPayments].sort((a, b) => {
       const cmp = a.date.localeCompare(b.date);

@@ -1085,11 +1085,29 @@ function OutstandingView({ onSelectPartyForLedger }) {
     setLoading(true);
     try {
       const [c, s] = await Promise.all([
-        api.getCustomerOutstanding().catch(() => []),
-        api.getSupplierOutstanding().catch(() => [])
+        api.getCustomerOutstanding().catch(() => ({ rows: [] })),
+        api.getSupplierOutstanding().catch(() => ({ rows: [] }))
       ]);
-      setCustRows(c || []);
-      setSuppRows(s || []);
+      const cRows = Array.isArray(c) ? c : (c?.rows || []);
+      const sRows = Array.isArray(s) ? s : (s?.rows || []);
+      setCustRows(cRows.map(r => ({
+        ...r,
+        id: r.customerId || r.id,
+        name: r.customerName || r.name,
+        phone: r.phone || '',
+        address: r.city || r.address || '',
+        gst_number: r.gstNumber || r.gst_number || '',
+        net_balance: Number(r.netOutstanding ?? r.net_balance ?? r.balance ?? 0)
+      })));
+      setSuppRows(sRows.map(r => ({
+        ...r,
+        id: r.supplierId || r.id,
+        name: r.supplierName || r.name,
+        phone: r.phone || '',
+        address: r.city || r.address || '',
+        gst_number: r.gstNumber || r.gst_number || '',
+        net_balance: Number(r.netPayable ?? r.net_balance ?? r.balance ?? 0)
+      })));
     } catch (err) {
       console.error(err);
     } finally {
@@ -1102,12 +1120,12 @@ function OutstandingView({ onSelectPartyForLedger }) {
   }, []);
 
   const data = tab === 'receivables' ? custRows : suppRows;
-  const filtered = data.filter(r =>
-    (r.name || '').toLowerCase().includes(search.toLowerCase()) ||
-    (r.phone || '').includes(search)
+  const filtered = (data || []).filter(r =>
+    (r.name || '').toLowerCase().includes((search || '').toLowerCase()) ||
+    (r.phone || '').includes(search || '')
   );
 
-  const totalOutstanding = data.reduce((acc, r) => acc + (Number(r.net_balance || r.balance || r.outstanding || 0)), 0);
+  const totalOutstanding = (data || []).reduce((acc, r) => acc + (Number(r.net_balance || r.balance || r.outstanding || 0)), 0);
 
   const handleSendReminder = (party) => {
     const phone = (party.phone || '').replace(/[^0-9]/g, '');

@@ -29,7 +29,7 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
   const [ratePerKg, setRatePerKg] = useState('');
   const [gstPercent, setGstPercent] = useState('18');
   const [invoiceNumber, setInvoiceNumber] = useState('');
-  const [paymentType, setPaymentType] = useState('Cash');
+  const [paymentType, setPaymentType] = useState('Credit');
   const [remarks, setRemarks] = useState('');
 
   useEffect(() => {
@@ -69,7 +69,7 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
         setQuantityKg('');
         setRatePerKg('');
         setInvoiceNumber('');
-        setPaymentType('Cash');
+        setPaymentType('Credit');
         setRemarks('');
       }
     }

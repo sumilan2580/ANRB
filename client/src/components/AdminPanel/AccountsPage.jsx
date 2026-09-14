@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  BookOpen, CreditCard, FileText, Download, RefreshCw, Plus, Trash2,
+  BookOpen, CreditCard, FileText, Download, RefreshCw, Plus, Trash2, Edit2,
   AlertTriangle, ChevronRight, Printer, Filter, Users, UserCheck, X,
   TrendingUp, TrendingDown, DollarSign
 } from 'lucide-react';
