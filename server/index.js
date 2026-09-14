@@ -623,8 +623,8 @@ app.get('/api/masters/raw-materials', async (req, res) => {
   res.json(rows);
 });
 
-// POST: Admin only can create raw materials
-app.post('/api/masters/raw-materials', requireAdmin, async (req, res) => {
+// POST: Both Admin and Manager can create raw materials (entry-only permission for Manager)
+app.post('/api/masters/raw-materials', async (req, res) => {
   try {
     const { name, category, unit = 'KG', minStockAlert = 1000, hsnCode = '3901', gstPercent = 18 } = req.body;
     if (!name || !category) {
@@ -711,8 +711,8 @@ app.get('/api/masters/finished-goods', async (req, res) => {
   res.json(rows);
 });
 
-// POST: Admin only can create finished goods
-app.post('/api/masters/finished-goods', requireAdmin, async (req, res) => {
+// POST: Both Admin and Manager can create finished goods (entry-only permission for Manager)
+app.post('/api/masters/finished-goods', async (req, res) => {
   try {
     const { productName = 'Tripal', gsm, widthSize, lengthVal, colour, grade = 'Grade A', unit = 'KG', minStockAlert = 500, hsnCode = '3926', gstPercent = 18 } = req.body;
     if (!gsm || !widthSize || !colour) {
