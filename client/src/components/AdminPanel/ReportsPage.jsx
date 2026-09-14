@@ -134,7 +134,17 @@ export default function ReportsPage() {
           <button className="btn btn-outline" onClick={loadReport}><RefreshCw size={14} /> Refresh</button>
           <button className="btn btn-outline btn-sm" onClick={() => {
             if (activeReport === 'wastage') exportCSV(wastageData.rows, 'wastage_report.csv');
-            if (activeReport === 'consumption') exportCSV(consumptionData.batches, 'consumption_report.csv');
+            if (activeReport === 'consumption') exportCSV((consumptionData.batches || []).map(b => ({
+              'Issue Batch #': b.batch_no,
+              'Date': b.date,
+              'Production Order': b.order_no || 'Floor Issue',
+              'Customer': b.customer_name || '—',
+              'Machine': b.machine_name || '—',
+              'Shift': b.shift_name || '—',
+              'Total Issued KG': Number(b.total_issued_kg ?? b.totalIssuedQty ?? 0),
+              'Status': b.status,
+              'Issued By': b.manager_name
+            })), 'consumption_report.csv');
             if (activeReport === 'customer-sales') exportCSV(customerSalesData.customers, 'customer_sales_report.csv');
             if (activeReport === 'sales') exportCSV(salesData, 'sales_report.csv');
             if (activeReport === 'purchases') exportCSV(purchases, 'purchase_report.csv');
@@ -294,7 +304,12 @@ export default function ReportsPage() {
               <div>
                 <span style={{ fontSize: '11px', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Total Issued Material: </span>
                 <span style={{ fontSize: '16px', fontWeight: '800', color: 'var(--emerald)' }}>
-                  {consumptionData.batches?.reduce((s, b) => s + (b.total_issued_kg || 0), 0).toLocaleString()} KG
+                  {(
+                    consumptionData.summary?.total_issued_kg ??
+                    consumptionData.summary?.totalIssued ??
+                    consumptionData.batches?.reduce((s, b) => s + (Number(b.total_issued_kg ?? b.totalIssuedQty) || 0), 0) ??
+                    0
+                  ).toLocaleString()} KG
                 </span>
               </div>
             </div>
@@ -315,25 +330,32 @@ export default function ReportsPage() {
               <tbody>
                 {(!consumptionData.batches || consumptionData.batches.length === 0) ? (
                   <tr><td colSpan="9" style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>No material consumption batches found.</td></tr>
-                ) : consumptionData.batches.map(b => (
-                  <tr key={b.id}>
-                    <td><span className="pill pill-cyan num-mono">{b.batch_no}</span></td>
-                    <td>{b.date}</td>
-                    <td style={{ fontWeight: '600' }}>{b.order_no || 'Floor Issue'}</td>
-                    <td>{b.customer_name || '—'}</td>
-                    <td>{b.machine_name || '—'}</td>
-                    <td><span className="pill pill-blue" style={{ fontSize: '10px' }}>{b.shift_name || '—'}</span></td>
-                    <td className="num-mono" style={{ textAlign: 'right', fontWeight: '700', color: 'var(--emerald)' }}>
-                      {b.total_issued_kg?.toLocaleString()} KG
-                    </td>
-                    <td>
-                      <span className={`pill ${b.status === 'Issued' ? 'pill-emerald' : b.status === 'Cancelled' ? 'pill-rose' : 'pill-amber'}`}>
-                        {b.status}
-                      </span>
-                    </td>
-                    <td style={{ fontSize: '12px' }}>{b.manager_name}</td>
-                  </tr>
-                ))}
+                ) : consumptionData.batches.map(b => {
+                  const issuedQty = Number(
+                    b.total_issued_kg ??
+                    b.totalIssuedQty ??
+                    (b.items ? b.items.reduce((sum, it) => sum + (Number(it.quantity) || 0), 0) : 0)
+                  ) || 0;
+                  return (
+                    <tr key={b.id}>
+                      <td><span className="pill pill-cyan num-mono">{b.batch_no}</span></td>
+                      <td>{b.date}</td>
+                      <td style={{ fontWeight: '600' }}>{b.order_no || 'Floor Issue'}</td>
+                      <td>{b.customer_name || '—'}</td>
+                      <td>{b.machine_name || '—'}</td>
+                      <td><span className="pill pill-blue" style={{ fontSize: '10px' }}>{b.shift_name || '—'}</span></td>
+                      <td className="num-mono" style={{ textAlign: 'right', fontWeight: '700', color: 'var(--emerald)' }}>
+                        {issuedQty.toLocaleString()} KG
+                      </td>
+                      <td>
+                        <span className={`pill ${b.status === 'Issued' ? 'pill-emerald' : b.status === 'Cancelled' ? 'pill-rose' : 'pill-amber'}`}>
+                          {b.status}
+                        </span>
+                      </td>
+                      <td style={{ fontSize: '12px' }}>{b.manager_name}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

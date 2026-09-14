@@ -76,6 +76,18 @@ export default function ConsumptionEntryModal({ isOpen, managerName, onClose, on
 
   const totalIssuedKg = items.reduce((sum, it) => sum + (Number(it.quantity) || 0), 0);
 
+  // Helper: get raw material object for a given ID
+  const getRmById = (id) => rawMaterials.find(r => String(r.id) === String(id));
+
+  // Check if any selected material has 0 stock or requested quantity exceeds available stock
+  const hasInsufficientStock = items.some(it => {
+    const rm = getRmById(it.rawMaterialId);
+    if (!rm) return false;
+    const available = rm.current_stock_kg || 0;
+    const q = parseFloat(it.quantity) || 0;
+    return available <= 0 || (q > 0 && q > available);
+  });
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -87,9 +99,19 @@ export default function ConsumptionEntryModal({ isOpen, managerName, onClose, on
         setError(`Please select a raw material for item #${i + 1}.`);
         return;
       }
+      const rm = getRmById(it.rawMaterialId);
+      const available = rm ? (rm.current_stock_kg || 0) : 0;
+      if (rm && available <= 0) {
+        setError(`"${rm.name}" out of stock hai. Issue nahi ho sakta.`);
+        return;
+      }
       const q = Number(it.quantity);
       if (isNaN(q) || q <= 0) {
         setError(`Item #${i + 1} must have quantity greater than 0.`);
+        return;
+      }
+      if (rm && q > available) {
+        setError(`"${rm.name}" - Qty not present in stock.`);
         return;
       }
     }
@@ -230,71 +252,101 @@ export default function ConsumptionEntryModal({ isOpen, managerName, onClose, on
                 </button>
               </div>
 
-              {items.map((it, idx) => (
-                <div
-                  key={idx}
-                  style={{
-                    background: 'rgba(255,255,255,0.03)',
-                    border: '1px solid var(--border-color)',
-                    borderRadius: '8px',
-                    padding: '12px',
-                    marginBottom: '10px'
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                    <span style={{ fontSize: '11px', fontWeight: '700', color: '#38bdf8' }}>Material #{idx + 1}</span>
-                    {items.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveItem(idx)}
-                        style={{ background: 'none', border: 'none', color: 'var(--rose)', cursor: 'pointer', padding: '2px' }}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    )}
-                  </div>
+              {items.map((it, idx) => {
+                const selRm = getRmById(it.rawMaterialId);
+                const stock = selRm ? (selRm.current_stock_kg || 0) : 0;
+                const minAlert = selRm?.min_stock_alert || 0;
+                const isOut = stock <= 0;
+                const isLow = !isOut && minAlert > 0 && stock <= minAlert;
+                const enteredQty = parseFloat(it.quantity) || 0;
+                const isQtyExceeded = selRm && enteredQty > 0 && enteredQty > stock;
 
-                  <div className="form-group" style={{ marginBottom: '8px' }}>
-                    <select
-                      className="form-select"
-                      value={it.rawMaterialId}
-                      onChange={e => handleItemChange(idx, 'rawMaterialId', e.target.value)}
-                      required
-                    >
-                      <option value="">Select Raw Material…</option>
-                      {rawMaterials.map(rm => (
-                        <option key={rm.id} value={rm.id}>
-                          {rm.name} ({rm.category || 'Polymer'}) — Stock: {rm.current_stock_kg || 0} KG
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                return (
+                  <div
+                    key={idx}
+                    style={{
+                      background: 'rgba(255,255,255,0.03)',
+                      border: isQtyExceeded ? '1px solid rgba(244, 63, 94, 0.5)' : '1px solid var(--border-color)',
+                      borderRadius: '8px',
+                      padding: '12px',
+                      marginBottom: '10px'
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                      <span style={{ fontSize: '11px', fontWeight: '700', color: '#38bdf8' }}>Material #{idx + 1}</span>
+                      {items.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveItem(idx)}
+                          style={{ background: 'none', border: 'none', color: 'var(--rose)', cursor: 'pointer', padding: '2px' }}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '8px' }}>
-                    <div>
-                      <input
-                        type="number"
-                        className="form-input num-mono"
-                        placeholder="Quantity (KG) *"
-                        value={it.quantity}
-                        onChange={e => handleItemChange(idx, 'quantity', e.target.value)}
+                    <div className="form-group" style={{ marginBottom: '8px' }}>
+                      <select
+                        className="form-select"
+                        value={it.rawMaterialId}
+                        onChange={e => handleItemChange(idx, 'rawMaterialId', e.target.value)}
                         required
-                        min="0.01"
-                        step="any"
-                      />
+                      >
+                        <option value="">Select Raw Material…</option>
+                        {rawMaterials.map(rm => {
+                          const rmStock = rm.current_stock_kg || 0;
+                          const rmOutOfStock = rmStock <= 0;
+                          return (
+                            <option key={rm.id} value={rm.id} disabled={rmOutOfStock}>
+                              {rm.name} ({rm.category || 'Other'}){rmOutOfStock ? ' — Out of Stock' : ''}
+                            </option>
+                          );
+                        })}
+                      </select>
+                      {selRm && isOut && (
+                        <div style={{ marginTop: '5px', display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11.5px', color: 'var(--rose)', fontWeight: '600' }}>
+                          <span>⛔</span> Out of Stock
+                        </div>
+                      )}
+                      {selRm && isLow && (
+                        <div style={{ marginTop: '5px', display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11.5px', color: 'var(--amber)', fontWeight: '600' }}>
+                          <span>⚠️</span> Low Stock
+                        </div>
+                      )}
                     </div>
-                    <div>
-                      <input
-                        type="text"
-                        className="form-input"
-                        placeholder="Lot / Silo #"
-                        value={it.batchLot}
-                        onChange={e => handleItemChange(idx, 'batchLot', e.target.value)}
-                      />
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '8px' }}>
+                      <div>
+                        <input
+                          type="number"
+                          className="form-input num-mono"
+                          placeholder="Quantity (KG) *"
+                          value={it.quantity}
+                          onChange={e => handleItemChange(idx, 'quantity', e.target.value)}
+                          required
+                          min="0.01"
+                          step="any"
+                          style={isQtyExceeded ? { borderColor: 'var(--rose)', background: 'rgba(244, 63, 94, 0.05)' } : {}}
+                        />
+                        {isQtyExceeded && (
+                          <div style={{ marginTop: '5px', fontSize: '11.5px', color: 'var(--rose)', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                            <span>⚠️</span> Qty not present in stock
+                          </div>
+                        )}
+                      </div>
+                      <div>
+                        <input
+                          type="text"
+                          className="form-input"
+                          placeholder="Lot / Silo #"
+                          value={it.batchLot}
+                          onChange={e => handleItemChange(idx, 'batchLot', e.target.value)}
+                        />
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
 
               <div style={{
                 display: 'flex',
@@ -331,7 +383,8 @@ export default function ConsumptionEntryModal({ isOpen, managerName, onClose, on
             <button
               type="submit"
               className="btn btn-primary"
-              disabled={submitting || loading}
+              disabled={submitting || loading || hasInsufficientStock}
+              title={hasInsufficientStock ? 'Stock se zyada quantity enter ki gayi hai ya stock nahi hai' : ''}
             >
               {submitting ? 'Confirming Issue…' : `Confirm Issue (${totalIssuedKg} KG)`}
             </button>

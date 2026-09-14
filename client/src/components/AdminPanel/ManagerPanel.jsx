@@ -1635,24 +1635,33 @@ export default function ManagerPanel({ user, onLogout }) {
               <div style={{ textAlign: 'center', padding: '60px', color: '#475569' }}>No material issues logged yet.</div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                {entries.consumptions.map(c => (
-                  <div key={c.id} style={{
-                    background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(255,255,255,0.06)',
-                    borderRadius: '10px', padding: '14px 18px',
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px'
-                  }}>
-                    <div>
-                      <div style={{ fontSize: '14px', fontWeight: '600', color: '#e2e8f0' }}>Batch: {c.batch_code}</div>
-                      <div style={{ fontSize: '12px', color: '#64748b', marginTop: '3px' }}>
-                        Machine: <strong style={{ color: '#cbd5e1' }}>{c.machine_name || 'Machine'}</strong> · Shift: {c.shift_name || '—'} · Status: {c.status || 'COMPLETED'}
+                {entries.consumptions.map(c => {
+                  const batchCode = c.batch_no || c.batch_code || `#${c.id}`;
+                  const totalKg = c.total_issued_kg ?? (c.items ? c.items.reduce((s, it) => s + (Number(it.quantity) || 0), 0) : 0);
+                  return (
+                    <div key={c.id} style={{
+                      background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(255,255,255,0.06)',
+                      borderRadius: '10px', padding: '14px 18px',
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px'
+                    }}>
+                      <div>
+                        <div style={{ fontSize: '14px', fontWeight: '600', color: '#e2e8f0' }}>Batch: {batchCode}</div>
+                        <div style={{ fontSize: '12px', color: '#64748b', marginTop: '3px' }}>
+                          Machine: <strong style={{ color: '#cbd5e1' }}>{c.machine_name || 'Machine'}</strong> · Shift: {c.shift_name || '—'} · Status: {c.status || 'Issued'}
+                        </div>
+                        {c.items && c.items.length > 0 && (
+                          <div style={{ fontSize: '11.5px', color: '#94a3b8', marginTop: '4px' }}>
+                            Materials: {c.items.map(it => `${it.raw_material_name || 'Material'} (${fmt(it.quantity)} ${it.unit || 'KG'})`).join(', ')}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: '16px', fontWeight: '700', color: '#f59e0b' }}>{fmt(totalKg)} KG</div>
+                        <div style={{ fontSize: '11px', color: '#64748b' }}>{c.date}</div>
                       </div>
                     </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize: '16px', fontWeight: '700', color: '#f59e0b' }}>{fmt(c.total_issued_kg)} KG</div>
-                      <div style={{ fontSize: '11px', color: '#64748b' }}>{c.date}</div>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

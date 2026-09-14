@@ -1460,11 +1460,17 @@ app.get('/api/transactions/consumption-batches', async (req, res) => {
       WHERE cbi.consumption_batch_id = ?
     `);
 
-    const result = await Promise.all(batches.map(async b => ({
-      ...b,
-      production_status: (b.linked_production_id || b.status === 'Completed') ? 'Completed' : (b.status === 'Issued' ? 'Ready for Production' : b.status),
-      items: await getItems.all(b.id)
-    })));
+    const result = await Promise.all(batches.map(async b => {
+      const items = await getItems.all(b.id);
+      const totalIssuedKg = items.reduce((sum, it) => sum + (Number(it.quantity) || 0), 0);
+      return {
+        ...b,
+        batch_code: b.batch_no || b.batch_code,
+        total_issued_kg: totalIssuedKg,
+        production_status: (b.linked_production_id || b.status === 'Completed') ? 'Completed' : (b.status === 'Issued' ? 'Ready for Production' : b.status),
+        items
+      };
+    }));
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1495,8 +1501,12 @@ app.get('/api/transactions/consumption-batches/:id', async (req, res) => {
       WHERE cbi.consumption_batch_id = ?
     `).all(batch.id);
 
+    const totalIssuedKg = items.reduce((sum, it) => sum + (Number(it.quantity) || 0), 0);
+
     res.json({
       ...batch,
+      batch_code: batch.batch_no,
+      total_issued_kg: totalIssuedKg,
       items
     });
   } catch (err) {
@@ -3585,7 +3595,7 @@ app.get('/api/reports/wastage', requireAdmin, async (req, res) => {
 // Consumption Report: Raw Materials Issued vs Finished Goods Produced
 app.get('/api/reports/consumption', requireAdmin, async (req, res) => {
   try {
-    const { dateFrom, dateTo } = req.query;
+    const { dateFrom, dateTo, managerName, machineId, customerId } = req.query;
     let query = `
       SELECT cb.*, po.order_no, c.name as customer_name, m.name as machine_name, s.name as shift_name
       FROM consumption_batches cb
@@ -3598,6 +3608,9 @@ app.get('/api/reports/consumption', requireAdmin, async (req, res) => {
     const params = [];
     if (dateFrom) { query += ' AND cb.date >= ?'; params.push(dateFrom); }
     if (dateTo) { query += ' AND cb.date <= ?'; params.push(dateTo); }
+    if (managerName) { query += ' AND cb.manager_name = ?'; params.push(managerName); }
+    if (machineId) { query += ' AND cb.machine_id = ?'; params.push(machineId); }
+    if (customerId) { query += ' AND po.customer_id = ?'; params.push(customerId); }
     query += ' ORDER BY cb.date DESC, cb.id DESC';
 
     const batches = await db.prepare(query).all(...params);
@@ -3610,22 +3623,23 @@ app.get('/api/reports/consumption', requireAdmin, async (req, res) => {
 
     const enriched = await Promise.all(batches.map(async b => {
       const items = await getItems.all(b.id);
-      const totalIssuedQty = items.reduce((acc, it) => acc + (it.quantity || 0), 0);
+      const totalIssuedQty = items.reduce((acc, it) => acc + (Number(it.quantity) || 0), 0);
       const linkedBatches = await db.prepare('SELECT * FROM production_batches WHERE consumption_batch_id = ? AND is_voided = 0').all(b.id);
-      const totalProduced = linkedBatches.reduce((acc, pb) => acc + (pb.total_finished_kg || 0), 0);
-      const totalWastage = linkedBatches.reduce((acc, pb) => acc + (pb.total_wastage_kg || 0), 0);
+      const totalProduced = linkedBatches.reduce((acc, pb) => acc + (Number(pb.total_finished_kg) || 0), 0);
+      const totalWastage = linkedBatches.reduce((acc, pb) => acc + (Number(pb.total_wastage_kg) || 0), 0);
       const yieldPct = totalIssuedQty > 0 ? Number(((totalProduced / totalIssuedQty) * 100).toFixed(2)) : 0;
       return {
         ...b,
         items,
         totalIssuedQty: Number(totalIssuedQty.toFixed(2)),
+        total_issued_kg: Number(totalIssuedQty.toFixed(2)),
         totalProduced: Number(totalProduced.toFixed(2)),
         totalWastage: Number(totalWastage.toFixed(2)),
         yieldPct
       };
     }));
 
-    const grandIssued = enriched.reduce((acc, b) => acc + b.totalIssuedQty, 0);
+    const grandIssued = enriched.reduce((acc, b) => acc + (b.total_issued_kg || b.totalIssuedQty || 0), 0);
     const grandProduced = enriched.reduce((acc, b) => acc + b.totalProduced, 0);
     const grandWastage = enriched.reduce((acc, b) => acc + b.totalWastage, 0);
     const overallYield = grandIssued > 0 ? Number(((grandProduced / grandIssued) * 100).toFixed(2)) : 0;
@@ -3634,6 +3648,7 @@ app.get('/api/reports/consumption', requireAdmin, async (req, res) => {
       batches: enriched,
       summary: {
         totalIssued: Number(grandIssued.toFixed(2)),
+        total_issued_kg: Number(grandIssued.toFixed(2)),
         totalProduced: Number(grandProduced.toFixed(2)),
         totalWastage: Number(grandWastage.toFixed(2)),
         overallYield
