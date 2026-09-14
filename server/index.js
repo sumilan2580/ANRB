@@ -2619,8 +2619,15 @@ app.post('/api/transactions/sales', async (req, res) => {
       date,
       customerId,
       salesType = 'GST', // 'GST' or 'NON_GST'
-      paymentType = 'Cash', // 'Cash', 'Credit', 'Bank'
+      paymentType = 'Cash', // 'Cash', 'Credit', 'Bank', etc.
       invoiceNumber = '',
+      stateCode = '',
+      reverseCharge = 'No',
+      billingAddress = '',
+      shippingAddress = '',
+      shippingName = '',
+      customerGstin = '',
+      termsConditions = '',
       discountAmount = 0,
       otherCharges = 0,
       roundOff = 0,
@@ -2749,20 +2756,29 @@ app.post('/api/transactions/sales', async (req, res) => {
       }
       const firstItem = processedLines[0];
 
+      const finalStateCode = stateCode || cust.state_code || '24';
+      const finalRevCharge = reverseCharge || 'No';
+      const finalBilling = billingAddress || cust.billing_address || cust.address || '';
+      const finalShipping = shippingAddress || cust.shipping_address || finalBilling;
+      const finalShipName = shippingName || cust.name || '';
+      const finalGstin = customerGstin || cust.gst_number || '';
+      const finalTerms = termsConditions || '';
+
       // 1. Insert header
       const info = await db.prepare(`
         INSERT INTO sales (
           sale_code, invoice_number, date, customer_id, finished_product_id, quantity_kg, rate_per_kg,
           taxable_amount, gst_percent, cgst_amount, sgst_amount, igst_amount, total_amount,
           sales_type, payment_type, customer_gstin, billing_address, shipping_address,
-          discount_amount, other_charges, round_off, remarks, manager_id, manager_name, device_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          discount_amount, other_charges, round_off, remarks, manager_id, manager_name, device_id,
+          state_code, reverse_charge, shipping_name, terms_conditions
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         saleCode, finalInvoice, date, customerId, firstItem.finishedProductId, firstItem.quantity, firstItem.rate,
         totalTaxable, firstItem.gstPercent, totalCgst, totalSgst, totalIgst, grandTotal,
-        salesType, paymentType, cust.gst_number || null, cust.billing_address || cust.address || null,
-        cust.shipping_address || cust.address || null, billDiscount, billOther, billRound,
-        remarks, finalManagerId, finalManagerName, finalDeviceId
+        salesType, paymentType, finalGstin, finalBilling, finalShipping,
+        billDiscount, billOther, billRound, remarks, finalManagerId, finalManagerName, finalDeviceId,
+        finalStateCode, finalRevCharge, finalShipName, finalTerms
       );
       const saleId = info.lastInsertRowid;
 
@@ -2866,6 +2882,13 @@ app.put('/api/transactions/sales/:id', requireAdmin, async (req, res) => {
       salesType = sale.sales_type || 'GST',
       paymentType = sale.payment_type || 'Credit',
       invoiceNumber = sale.invoice_number || '',
+      stateCode,
+      reverseCharge,
+      billingAddress,
+      shippingAddress,
+      shippingName,
+      customerGstin,
+      termsConditions,
       discountAmount = 0,
       otherCharges = 0,
       roundOff = 0,
@@ -2988,19 +3011,30 @@ app.put('/api/transactions/sales/:id', requireAdmin, async (req, res) => {
       // 3. Update header
       const firstItem = processedLines[0];
       const finalInvoice = trimmedInvoice || sale.invoice_number;
+      const finalStateCode = stateCode !== undefined ? stateCode : (sale.state_code || cust.state_code || '24');
+      const finalRevCharge = reverseCharge !== undefined ? reverseCharge : (sale.reverse_charge || 'No');
+      const finalBilling = billingAddress !== undefined ? billingAddress : (sale.billing_address || cust.billing_address || cust.address || '');
+      const finalShipping = shippingAddress !== undefined ? shippingAddress : (sale.shipping_address || cust.shipping_address || finalBilling);
+      const finalShipName = shippingName !== undefined ? shippingName : (sale.shipping_name || cust.name || '');
+      const finalGstin = customerGstin !== undefined ? customerGstin : (sale.customer_gstin || cust.gst_number || '');
+      const finalTerms = termsConditions !== undefined ? termsConditions : (sale.terms_conditions || '');
+
       await db.prepare(`
         UPDATE sales
         SET date = ?, customer_id = ?, finished_product_id = ?, quantity_kg = ?, rate_per_kg = ?,
             taxable_amount = ?, gst_percent = ?, cgst_amount = ?, sgst_amount = ?, igst_amount = ?, total_amount = ?,
             sales_type = ?, payment_type = ?, customer_gstin = ?, billing_address = ?, shipping_address = ?,
-            discount_amount = ?, other_charges = ?, round_off = ?, invoice_number = ?, remarks = ?, updated_at = CURRENT_TIMESTAMP
+            discount_amount = ?, other_charges = ?, round_off = ?, invoice_number = ?, remarks = ?,
+            state_code = ?, reverse_charge = ?, shipping_name = ?, terms_conditions = ?,
+            updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).run(
         date, cust.id, firstItem.finishedProductId, firstItem.quantity, firstItem.rate,
         totalTaxable, firstItem.gstPercent, totalCgst, totalSgst, totalIgst, grandTotal,
-        salesType, paymentType, cust.gst_number || null, cust.billing_address || cust.address || null,
-        cust.shipping_address || cust.address || null, billDiscount, billOther, billRound,
-        finalInvoice, remarks, sale.id
+        salesType, paymentType, finalGstin, finalBilling, finalShipping,
+        billDiscount, billOther, billRound, finalInvoice, remarks,
+        finalStateCode, finalRevCharge, finalShipName, finalTerms,
+        sale.id
       );
 
       // 4. Insert new items and deduct stock
@@ -4979,6 +5013,13 @@ app.get('/api/invoices/:saleId', async (req, res) => {
         date: sale.date,
         salesType: sale.sales_type || 'GST',
         paymentType: sale.payment_type || 'Cash',
+        stateCode: sale.state_code || sale.customer_state_code || '24',
+        reverseCharge: sale.reverse_charge || 'No',
+        billingAddress: sale.billing_address || sale.customer_address || '—',
+        shippingAddress: sale.shipping_address || sale.billing_address || sale.customer_address || '—',
+        shippingName: sale.shipping_name || sale.customer_name || '—',
+        customerGstin: sale.customer_gstin || 'Unregistered',
+        termsConditions: sale.terms_conditions || '',
         discountAmount: sale.discount_amount || 0,
         otherCharges: sale.other_charges || 0,
         roundOff: sale.round_off || 0,

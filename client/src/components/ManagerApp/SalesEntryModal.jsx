@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Truck, CheckCircle2, AlertCircle, ShieldAlert } from 'lucide-react';
+import { Truck, CheckCircle2, AlertCircle, ShieldAlert, MapPin, FileText } from 'lucide-react';
 import { api } from '../../api';
+
+const DEFAULT_TERMS = `1. Goods once sold will not be taken back or exchanged.
+2. Payment terms: Subject to realization of Cheque / RTGS.
+3. Subject to local jurisdiction only.`;
 
 export default function SalesEntryModal({ isOpen, initialSale, onClose, onSuccess, managerProfile }) {
   const [customers, setCustomers] = useState([]);
@@ -11,6 +15,15 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
 
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [customerId, setCustomerId] = useState('');
+  const [stateCode, setStateCode] = useState('24');
+  const [reverseCharge, setReverseCharge] = useState('No');
+  const [billingAddress, setBillingAddress] = useState('');
+  const [customerGstin, setCustomerGstin] = useState('');
+  const [sameAsBilled, setSameAsBilled] = useState(true);
+  const [shippingName, setShippingName] = useState('');
+  const [shippingAddress, setShippingAddress] = useState('');
+  const [termsConditions, setTermsConditions] = useState(DEFAULT_TERMS);
+
   const [finishedProductId, setFinishedProductId] = useState('');
   const [quantityKg, setQuantityKg] = useState('');
   const [ratePerKg, setRatePerKg] = useState('');
@@ -26,6 +39,15 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
       if (initialSale) {
         setDate(initialSale.date || new Date().toISOString().split('T')[0]);
         setCustomerId(String(initialSale.customer_id || ''));
+        setStateCode(initialSale.state_code || '24');
+        setReverseCharge(initialSale.reverse_charge || 'No');
+        setBillingAddress(initialSale.billing_address || '');
+        setCustomerGstin(initialSale.customer_gstin || '');
+        setShippingName(initialSale.shipping_name || '');
+        setShippingAddress(initialSale.shipping_address || '');
+        setSameAsBilled(!initialSale.shipping_address || initialSale.shipping_address === initialSale.billing_address);
+        setTermsConditions(initialSale.terms_conditions !== undefined && initialSale.terms_conditions !== null ? initialSale.terms_conditions : DEFAULT_TERMS);
+
         setFinishedProductId(String(initialSale.finished_product_id || initialSale.items?.[0]?.finished_product_id || ''));
         setQuantityKg(String(initialSale.quantity_kg || initialSale.items?.[0]?.quantity || ''));
         setRatePerKg(String(initialSale.rate_per_kg || initialSale.items?.[0]?.rate || ''));
@@ -35,9 +57,19 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
         setRemarks(initialSale.remarks || '');
       } else {
         setDate(new Date().toISOString().split('T')[0]);
+        setStateCode('24');
+        setReverseCharge('No');
+        setBillingAddress('');
+        setCustomerGstin('');
+        setSameAsBilled(true);
+        setShippingName('');
+        setShippingAddress('');
+        setTermsConditions(DEFAULT_TERMS);
+
         setQuantityKg('');
         setRatePerKg('');
         setInvoiceNumber('');
+        setPaymentType('Cash');
         setRemarks('');
       }
     }
@@ -54,8 +86,20 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
       const activeFGs = fgs.filter(f => f.status === 'active');
       setCustomers(activeCusts);
       setFinishedGoods(activeFGs);
+
       if (!initialSale) {
-        setCustomerId(activeCusts.length > 0 ? String(activeCusts[0].id) : '');
+        if (activeCusts.length > 0) {
+          const firstC = activeCusts[0];
+          setCustomerId(String(firstC.id));
+          setStateCode(firstC.state_code || '24');
+          setBillingAddress(firstC.billing_address || firstC.address || '');
+          setCustomerGstin(firstC.gst_number || '');
+          setShippingName(firstC.name || '');
+          setShippingAddress(firstC.shipping_address || firstC.billing_address || firstC.address || '');
+        } else {
+          setCustomerId('');
+        }
+
         if (activeFGs.length > 0) {
           setFinishedProductId(String(activeFGs[0].id));
           setGstPercent(String(activeFGs[0].gst_percent || 18));
@@ -70,6 +114,18 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
       setLoading(false);
     }
   }
+
+  const handleCustomerChange = (cId) => {
+    setCustomerId(cId);
+    const c = customers.find(item => String(item.id) === String(cId));
+    if (c) {
+      setStateCode(c.state_code || '24');
+      setBillingAddress(c.billing_address || c.address || '');
+      setCustomerGstin(c.gst_number || '');
+      setShippingName(c.name || '');
+      setShippingAddress(c.shipping_address || c.billing_address || c.address || '');
+    }
+  };
 
   const handleFGChange = (id) => {
     setFinishedProductId(id);
@@ -121,6 +177,10 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
       setSubmitting(true);
       setError('');
 
+      const selCust = customers.find(c => String(c.id) === String(customerId));
+      const finalShipAddr = sameAsBilled ? (billingAddress || selCust?.address || '') : (shippingAddress || billingAddress || '');
+      const finalShipName = sameAsBilled ? (selCust?.name || '') : (shippingName || selCust?.name || '');
+
       const payload = {
         date,
         customerId: parseInt(customerId),
@@ -129,6 +189,13 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
         ratePerKg: numRate,
         gstPercent: numGst,
         invoiceNumber: invoiceNumber.trim(),
+        stateCode: stateCode.trim() || '24',
+        reverseCharge,
+        billingAddress: billingAddress.trim() || (selCust?.address || ''),
+        shippingAddress: finalShipAddr.trim(),
+        shippingName: finalShipName.trim(),
+        customerGstin: customerGstin.trim() || (selCust?.gst_number || ''),
+        termsConditions: termsConditions.trim(),
         paymentType,
         remarks,
         managerName: managerProfile?.name || 'Admin',
@@ -166,7 +233,7 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
 
   return (
     <div className="modal-overlay">
-      <div className="modal-content" style={{ maxWidth: '540px' }}>
+      <div className="modal-content" style={{ maxWidth: '660px' }}>
         <div className="modal-header" style={{ background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(6, 182, 212, 0.2))' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: 'var(--emerald)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>
@@ -185,7 +252,7 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
         </div>
 
         <form onSubmit={handleSubmit}>
-          <div className="modal-body">
+          <div className="modal-body" style={{ maxHeight: 'calc(85vh - 120px)', overflowY: 'auto' }}>
             {loading && (
               <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-muted)' }}>Loading masters...</div>
             )}
@@ -199,6 +266,7 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
 
             {!loading && (
               <>
+                {/* Basic Invoice Information */}
                 <div className="form-grid">
                   <div className="form-group">
                     <label className="form-label">Sale Date *</label>
@@ -206,7 +274,7 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
                   </div>
                   <div className="form-group">
                     <label className="form-label">Customer *</label>
-                    <select className="form-select" value={customerId} onChange={e => setCustomerId(e.target.value)} required>
+                    <select className="form-select" value={customerId} onChange={e => handleCustomerChange(e.target.value)} required>
                       {customers.length === 0 && <option value="">No active customers</option>}
                       {customers.map(c => (
                         <option key={c.id} value={c.id}>{c.name}</option>
@@ -215,6 +283,29 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
                   </div>
                 </div>
 
+                {/* State Code & Reverse Charge */}
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label className="form-label">State Code (Place of Supply) *</label>
+                    <input
+                      type="text"
+                      className="form-input num-mono"
+                      placeholder="e.g. 24"
+                      value={stateCode}
+                      onChange={e => setStateCode(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Reverse Charge</label>
+                    <select className="form-select" value={reverseCharge} onChange={e => setReverseCharge(e.target.value)}>
+                      <option value="No">No</option>
+                      <option value="Yes">Yes</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Product Selection */}
                 <div className="form-group">
                   <label className="form-label">Finished Good Specification *</label>
                   <select
@@ -262,6 +353,7 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
                   )}
                 </div>
 
+                {/* Qty & Rate */}
                 <div className="form-grid">
                   <div className="form-group">
                     <label className="form-label">Quantity Sold (KG) *</label>
@@ -283,6 +375,7 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
                   </div>
                 </div>
 
+                {/* GST & Invoice Number */}
                 <div className="form-grid">
                   <div className="form-group">
                     <label className="form-label">GST %</label>
@@ -320,21 +413,104 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
                   </div>
                 </div>
 
+                {/* Mode of Payment & Remarks */}
                 <div className="form-grid">
                   <div className="form-group">
-                    <label className="form-label">Payment Mode</label>
+                    <label className="form-label">Mode of Payment</label>
                     <select className="form-select" value={paymentType} onChange={e => setPaymentType(e.target.value)}>
                       <option value="Cash">Cash</option>
                       <option value="Credit">Credit</option>
                       <option value="Cheque">Cheque</option>
                       <option value="UPI">UPI</option>
                       <option value="Bank Transfer">Bank Transfer</option>
+                      <option value="RTGS/NEFT">RTGS/NEFT</option>
                     </select>
                   </div>
                   <div className="form-group">
-                    <label className="form-label">Remarks</label>
+                    <label className="form-label">Remarks / Note</label>
                     <input type="text" className="form-input" placeholder="Optional note" value={remarks} onChange={e => setRemarks(e.target.value)} />
                   </div>
+                </div>
+
+                {/* Billed To & Shipped To Section */}
+                <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '14px', marginBottom: '14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '700', color: '#38bdf8', marginBottom: '10px' }}>
+                    <MapPin size={14} /> Receiver & Consignee Details (Billed To & Shipped To)
+                  </div>
+
+                  <div className="form-grid">
+                    <div className="form-group">
+                      <label className="form-label">Billed To Address</label>
+                      <input
+                        type="text"
+                        className="form-input"
+                        placeholder="Billing address"
+                        value={billingAddress}
+                        onChange={e => setBillingAddress(e.target.value)}
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Customer GSTIN / UIN</label>
+                      <input
+                        type="text"
+                        className="form-input num-mono"
+                        placeholder="GSTIN (leave blank if unregistered)"
+                        value={customerGstin}
+                        onChange={e => setCustomerGstin(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ margin: '8px 0 10px' }}>
+                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '12px', color: 'var(--text-main)', fontWeight: '600' }}>
+                      <input
+                        type="checkbox"
+                        checked={sameAsBilled}
+                        onChange={e => setSameAsBilled(e.target.checked)}
+                      />
+                      Shipped To is same as Billed To
+                    </label>
+                  </div>
+
+                  {!sameAsBilled && (
+                    <div className="form-grid">
+                      <div className="form-group">
+                        <label className="form-label">Shipped To Name (Consignee)</label>
+                        <input
+                          type="text"
+                          className="form-input"
+                          placeholder="Consignee / Party name"
+                          value={shippingName}
+                          onChange={e => setShippingName(e.target.value)}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Shipping Address</label>
+                        <input
+                          type="text"
+                          className="form-input"
+                          placeholder="Delivery / Shipping destination address"
+                          value={shippingAddress}
+                          onChange={e => setShippingAddress(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Terms & Conditions Section */}
+                <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-color)', borderRadius: '10px', padding: '14px', marginBottom: '14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '700', color: '#f59e0b', marginBottom: '8px' }}>
+                    <FileText size={14} /> Terms & Conditions
+                  </div>
+                  <textarea
+                    className="form-input"
+                    rows="3"
+                    style={{ resize: 'vertical', fontSize: '11.5px', fontFamily: 'inherit', lineHeight: '1.4' }}
+                    placeholder="Invoice terms and conditions..."
+                    value={termsConditions}
+                    onChange={e => setTermsConditions(e.target.value)}
+                  />
                 </div>
               </>
             )}

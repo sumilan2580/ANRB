@@ -278,26 +278,44 @@ export default function TaxInvoiceModal({ isOpen, saleId, onClose }) {
                   <div><strong>Payment Mode:</strong> {inv?.paymentType}</div>
                 </div>
                 <div>
-                  <div style={{ marginBottom: '4px' }}><strong>State Code (Place of Supply):</strong> {cust?.stateCode || comp?.stateCode || '24'}</div>
-                  <div style={{ marginBottom: '4px' }}><strong>Reverse Charge:</strong> No</div>
+                  <div style={{ marginBottom: '4px' }}><strong>State Code (Place of Supply):</strong> {inv?.stateCode || cust?.stateCode || comp?.stateCode || '24'}</div>
+                  <div style={{ marginBottom: '4px' }}><strong>Reverse Charge:</strong> {inv?.reverseCharge || 'No'}</div>
                   <div style={{ marginBottom: '4px' }}><strong>Sales Type:</strong> {inv?.salesType || 'GST'}</div>
                   <div><strong>Prepared By:</strong> {inv?.managerName || 'Admin'}</div>
                 </div>
               </div>
 
-              {/* Buyer & Consignee */}
-              <div style={{ border: '1px solid #cbd5e1', borderRadius: '6px', padding: '12px', marginBottom: '16px', fontSize: '11.5px' }}>
-                <div style={{ fontSize: '11px', fontWeight: '800', color: '#0284c7', textTransform: 'uppercase', marginBottom: '4px' }}>
-                  Details of Receiver | Billed & Shipped To:
+              {/* Buyer & Consignee: BILLED TO & SHIPPED TO */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px', fontSize: '11.5px' }}>
+                <div style={{ border: '1px solid #cbd5e1', borderRadius: '6px', padding: '10px' }}>
+                  <div style={{ fontSize: '11px', fontWeight: '800', color: '#0284c7', textTransform: 'uppercase', marginBottom: '4px', borderBottom: '1px solid #e2e8f0', paddingBottom: '3px' }}>
+                    Details of Receiver | Billed To
+                  </div>
+                  <div style={{ fontSize: '12.5px', fontWeight: '800', color: '#0f172a', marginBottom: '4px' }}>
+                    {cust?.name}
+                  </div>
+                  <div style={{ color: '#475569', lineHeight: 1.4 }}>
+                    <div><strong>Address:</strong> {inv?.billingAddress && inv.billingAddress !== '—' ? inv.billingAddress : (cust?.billingAddress && cust.billingAddress !== '—' ? cust.billingAddress : (cust?.address || '—'))}</div>
+                    <div><strong>City / Pincode:</strong> {cust?.city || '—'} {cust?.pincode ? `(${cust.pincode})` : ''}</div>
+                    <div><strong>GSTIN / UIN:</strong> <span style={{ fontWeight: '700', color: '#0f172a' }}>{inv?.customerGstin && inv.customerGstin !== 'Unregistered' ? inv.customerGstin : (cust?.gstin || 'Unregistered')}</span></div>
+                    <div><strong>State:</strong> {cust?.state || '—'} (Code: {inv?.stateCode || cust?.stateCode || '24'})</div>
+                    {cust?.phone && cust.phone !== '—' && <div><strong>Contact:</strong> {cust.phone}</div>}
+                  </div>
                 </div>
-                <div style={{ fontSize: '13px', fontWeight: '800', color: '#0f172a', marginBottom: '4px' }}>
-                  {cust?.name}
-                </div>
-                <div style={{ color: '#475569', lineHeight: 1.4 }}>
-                  <div><strong>Address:</strong> {cust?.billingAddress && cust.billingAddress !== '—' ? cust.billingAddress : (cust?.address || '—')}</div>
-                  <div><strong>City / Pincode:</strong> {cust?.city || '—'} {cust?.pincode ? `(${cust.pincode})` : ''}</div>
-                  <div><strong>GSTIN / UIN:</strong> <span style={{ fontWeight: '700', color: '#0f172a' }}>{cust?.gstin || 'Unregistered'}</span> | <strong>State:</strong> {cust?.state || '—'} (Code: {cust?.stateCode || '—'})</div>
-                  {cust?.phone && cust.phone !== '—' && <div><strong>Contact:</strong> {cust.phone}</div>}
+
+                <div style={{ border: '1px solid #cbd5e1', borderRadius: '6px', padding: '10px' }}>
+                  <div style={{ fontSize: '11px', fontWeight: '800', color: '#0284c7', textTransform: 'uppercase', marginBottom: '4px', borderBottom: '1px solid #e2e8f0', paddingBottom: '3px' }}>
+                    Details of Consignee | Shipped To
+                  </div>
+                  <div style={{ fontSize: '12.5px', fontWeight: '800', color: '#0f172a', marginBottom: '4px' }}>
+                    {inv?.shippingName || cust?.name}
+                  </div>
+                  <div style={{ color: '#475569', lineHeight: 1.4 }}>
+                    <div><strong>Address:</strong> {inv?.shippingAddress && inv.shippingAddress !== '—' ? inv.shippingAddress : (cust?.shippingAddress && cust.shippingAddress !== '—' ? cust.shippingAddress : (inv?.billingAddress || cust?.address || '—'))}</div>
+                    <div><strong>City / Pincode:</strong> {cust?.city || '—'} {cust?.pincode ? `(${cust.pincode})` : ''}</div>
+                    <div><strong>State:</strong> {cust?.state || '—'} (Code: {inv?.stateCode || cust?.stateCode || '24'})</div>
+                    {cust?.phone && cust.phone !== '—' && <div><strong>Contact:</strong> {cust.phone}</div>}
+                  </div>
                 </div>
               </div>
 
@@ -401,11 +419,17 @@ export default function TaxInvoiceModal({ isOpen, saleId, onClose }) {
               <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '20px', borderTop: '1px solid #cbd5e1', paddingTop: '12px', fontSize: '10px', color: '#475569' }}>
                 <div>
                   <strong>Terms & Conditions:</strong>
-                  <ol style={{ margin: '4px 0 0', paddingLeft: '16px', lineHeight: 1.3 }}>
-                    <li>Goods once sold will not be taken back or exchanged.</li>
-                    <li>Payment terms: Subject to realization of Cheque / RTGS.</li>
-                    <li>Subject to local jurisdiction only.</li>
-                  </ol>
+                  {inv?.termsConditions ? (
+                    <div style={{ margin: '4px 0 0', whiteSpace: 'pre-line', lineHeight: 1.4 }}>
+                      {inv.termsConditions}
+                    </div>
+                  ) : (
+                    <ol style={{ margin: '4px 0 0', paddingLeft: '16px', lineHeight: 1.3 }}>
+                      <li>Goods once sold will not be taken back or exchanged.</li>
+                      <li>Payment terms: Subject to realization of Cheque / RTGS.</li>
+                      <li>Subject to local jurisdiction only.</li>
+                    </ol>
+                  )}
                 </div>
                 <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
                   <div style={{ fontWeight: '800', color: '#0f172a' }}>For {comp?.companyName || comp?.company_name}</div>

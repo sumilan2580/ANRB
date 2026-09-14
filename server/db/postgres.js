@@ -154,6 +154,23 @@ async function initPool() {
     throw lastErr;
   }
 
+  // Ensure invoice columns exist
+  try {
+    const client = await pool.connect();
+    try {
+      await client.query(`
+        ALTER TABLE sales ADD COLUMN IF NOT EXISTS state_code VARCHAR(10);
+        ALTER TABLE sales ADD COLUMN IF NOT EXISTS reverse_charge VARCHAR(10) DEFAULT 'No';
+        ALTER TABLE sales ADD COLUMN IF NOT EXISTS shipping_name VARCHAR(200);
+        ALTER TABLE sales ADD COLUMN IF NOT EXISTS terms_conditions TEXT;
+      `);
+    } finally {
+      client.release();
+    }
+  } catch (migErr) {
+    console.warn('[PostgreSQL] Sales invoice columns migration skipped:', migErr.message);
+  }
+
   await refreshCompanySettings();
   return pool;
 }
