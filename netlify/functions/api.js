@@ -17,15 +17,28 @@ let isInitialized = false;
 // Configure serverless-http with request path transformation
 const serverlessHandler = serverless(app, {
   request: (req, event) => {
-    // Netlify Functions receives event.path e.g. "/.netlify/functions/api/auth/login" or "/api/auth/login"
-    let p = event.path || req.url || '';
-    if (p.startsWith('/.netlify/functions/api')) {
-      p = p.replace('/.netlify/functions/api', '/api');
+    // Preserve query parameters: req.url from serverless-http includes query string e.g. "/.netlify/functions/api/path?param=val"
+    let [path, search] = (req.url || '').split('?');
+    if (!path && event.path) {
+      path = event.path;
     }
-    if (!p.startsWith('/api')) {
-      p = '/api' + (p.startsWith('/') ? p : '/' + p);
+    if (path.startsWith('/.netlify/functions/api')) {
+      path = path.replace('/.netlify/functions/api', '/api');
     }
-    req.url = p;
+    if (!path.startsWith('/api')) {
+      path = '/api' + (path.startsWith('/') ? path : '/' + path);
+    }
+
+    // Retain query parameters from req.url, or fallback to event.rawQuery / event.queryStringParameters
+    if (!search) {
+      if (event.rawQuery) {
+        search = event.rawQuery;
+      } else if (event.queryStringParameters && Object.keys(event.queryStringParameters).length > 0) {
+        search = new URLSearchParams(event.queryStringParameters).toString();
+      }
+    }
+
+    req.url = search ? `${path}?${search}` : path;
   }
 });
 
