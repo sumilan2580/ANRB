@@ -4,9 +4,99 @@ import {
   Plus, Clock, FileText, UserCheck, Layers, ClipboardList,
   ArrowDownLeft, ArrowUpRight, CreditCard, Printer, ShieldCheck,
   BookOpen, Download, MessageCircle, Cpu, Building2, Search, CheckCircle2,
-  AlertCircle, Eye, Share2, Send, X, AlertTriangle
+  AlertCircle, Eye, Share2, Send, X, AlertTriangle, ChevronDown
 } from 'lucide-react';
 import { api, session } from '../../api';
+
+// ─── Searchable Select / Combobox Component ───────────────────────────────────
+function SearchableSelect({ value, onChange, options, placeholder = 'Search or type...', required = false, style = {} }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const ref = useRef(null);
+
+  // Close when clicking outside
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const filtered = query
+    ? options.filter(o => o.label.toLowerCase().includes(query.toLowerCase()))
+    : options;
+
+  const displayLabel = options.find(o => o.value === value)?.label || value || '';
+
+  const handleSelect = (opt) => {
+    onChange(opt.value);
+    setQuery('');
+    setOpen(false);
+  };
+
+  const handleInputChange = (e) => {
+    setQuery(e.target.value);
+    onChange(e.target.value); // allow custom value
+    setOpen(true);
+  };
+
+  return (
+    <div ref={ref} style={{ position: 'relative', ...style }}>
+      <div style={{ position: 'relative' }}>
+        <input
+          type="text"
+          value={open ? query : displayLabel}
+          onChange={handleInputChange}
+          onFocus={() => { setOpen(true); setQuery(''); }}
+          placeholder={placeholder}
+          required={required && !value}
+          style={{
+            width: '100%', padding: '9px 36px 9px 12px', background: 'rgba(255,255,255,0.05)',
+            border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px',
+            color: '#f8fafc', fontSize: '13px', outline: 'none', boxSizing: 'border-box'
+          }}
+        />
+        <ChevronDown
+          size={14}
+          color="#64748b"
+          style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}
+        />
+      </div>
+      {open && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 9999,
+          background: '#1e293b', border: '1px solid rgba(255,255,255,0.15)',
+          borderRadius: '8px', marginTop: '3px', maxHeight: '200px', overflowY: 'auto',
+          boxShadow: '0 10px 30px rgba(0,0,0,0.5)'
+        }}>
+          {filtered.length === 0 && query && (
+            <div
+              style={{ padding: '8px 12px', color: '#94a3b8', fontSize: '12px', cursor: 'pointer' }}
+              onMouseDown={() => { onChange(query); setOpen(false); setQuery(''); }}
+            >
+              ✚ Use "{query}" as custom value
+            </div>
+          )}
+          {filtered.map(opt => (
+            <div
+              key={opt.value}
+              onMouseDown={() => handleSelect(opt)}
+              style={{
+                padding: '8px 12px', cursor: 'pointer', fontSize: '12.5px',
+                color: opt.value === value ? '#c084fc' : '#e2e8f0',
+                background: opt.value === value ? 'rgba(168,85,247,0.15)' : 'transparent',
+                borderBottom: '1px solid rgba(255,255,255,0.05)'
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
+              onMouseLeave={e => e.currentTarget.style.background = opt.value === value ? 'rgba(168,85,247,0.15)' : 'transparent'}
+            >
+              {opt.label}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 import PurchaseEntryModal from '../ManagerApp/PurchaseEntryModal';
 import ProductionEntryModal from '../ManagerApp/ProductionEntryModal';
 import SalesEntryModal from '../ManagerApp/SalesEntryModal';
@@ -134,7 +224,7 @@ function MasterAddModal({ isOpen, type, onClose, onCreated }) {
       if (type === 'raw-materials') {
         setFormData({ category: 'Polymer', unit: 'KG', hsnCode: '3901', gstPercent: '18', minStockAlert: '1000' });
       } else if (type === 'finished-goods') {
-        setFormData({ productName: 'Tripal', colour: 'Blue', grade: 'Grade A', hsnCode: '3926', gstPercent: '18', minStockAlert: '500' });
+        setFormData({ productName: 'Tripal', colour: 'ORANGE/BLUE', grade: 'Grade A', hsnCode: '3926', gstPercent: '18', minStockAlert: '500' });
       } else if (type === 'machines') {
         setFormData({ capacityKgPerDay: '5000' });
       } else if (type === 'shifts') {
@@ -186,15 +276,15 @@ function MasterAddModal({ isOpen, type, onClose, onCreated }) {
         { key: 'gsm', label: 'GSM *', type: 'number', required: true, placeholder: 'e.g. 150' },
         { key: 'widthSize', label: 'Width / Size *', required: true, placeholder: 'e.g. 16 FT' },
         { key: 'lengthVal', label: 'Length', placeholder: 'e.g. 100 M' },
-        { key: 'colour', label: 'Colour *', type: 'select', required: true, options: [
-          { value: 'Blue', label: 'Blue' },
-          { value: 'Green', label: 'Green' },
-          { value: 'Yellow', label: 'Yellow' },
-          { value: 'Black', label: 'Black' },
-          { value: 'Silver', label: 'Silver' },
-          { value: 'White', label: 'White' },
-          { value: 'Orange', label: 'Orange' },
-          { value: 'Red', label: 'Red' },
+        { key: 'colour', label: 'Colour *', type: 'combobox', required: true, options: [
+          { value: 'ORANGE/BLUE', label: 'ORANGE/BLUE' },
+          { value: 'SILVER/BLACK', label: 'SILVER/BLACK' },
+          { value: 'GREEN/BLACK', label: 'GREEN/BLACK' },
+          { value: 'SILVER/WHITE', label: 'SILVER/WHITE' },
+          { value: 'WHITE/WHITE', label: 'WHITE/WHITE' },
+          { value: 'BLUE/BLUE', label: 'BLUE/BLUE' },
+          { value: 'BLACK/BLACK', label: 'BLACK/BLACK' },
+          { value: 'ORANGE/NAVY BLUE', label: 'ORANGE/NAVY BLUE' },
         ]},
         { key: 'grade', label: 'Grade', type: 'select', options: [
           { value: 'Grade A', label: 'Grade A' },
@@ -324,23 +414,34 @@ function MasterAddModal({ isOpen, type, onClose, onCreated }) {
                   <label style={{ display: 'block', fontSize: '11.5px', fontWeight: '600', color: '#cbd5e1', marginBottom: '5px' }}>
                     {f.label}
                   </label>
-                  {f.type === 'select' ? (
-                    <select
+                  {f.type === 'combobox' ? (
+                    <SearchableSelect
                       value={formData[f.key] || ''}
-                      onChange={e => setFormData({ ...formData, [f.key]: e.target.value })}
+                      onChange={v => setFormData({ ...formData, [f.key]: v })}
+                      options={f.options || []}
+                      placeholder={f.placeholder || 'Search or type custom...'}
                       required={f.required}
-                      style={{
-                        width: '100%', padding: '9px 12px', background: 'rgba(255,255,255,0.05)',
-                        border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px',
-                        color: '#f8fafc', fontSize: '13px', outline: 'none'
-                      }}
-                    >
-                      {f.options?.map(opt => (
-                        <option key={opt.value} value={opt.value} style={{ background: '#0f172a', color: '#f8fafc' }}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
+                    />
+                  ) : f.type === 'select' ? (
+                    <div style={{ position: 'relative' }}>
+                      <select
+                        value={formData[f.key] || ''}
+                        onChange={e => setFormData({ ...formData, [f.key]: e.target.value })}
+                        required={f.required}
+                        style={{
+                          width: '100%', padding: '9px 12px', background: 'rgba(255,255,255,0.05)',
+                          border: '1px solid rgba(255,255,255,0.12)', borderRadius: '8px',
+                          color: '#f8fafc', fontSize: '13px', outline: 'none', appearance: 'none'
+                        }}
+                      >
+                        {f.options?.map(opt => (
+                          <option key={opt.value} value={opt.value} style={{ background: '#0f172a', color: '#f8fafc' }}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown size={13} color="#64748b" style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+                    </div>
                   ) : (
                     <input
                       type={f.type || 'text'}

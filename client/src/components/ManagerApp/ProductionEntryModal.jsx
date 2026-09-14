@@ -1,6 +1,142 @@
-import React, { useState, useEffect } from 'react';
-import { Factory, Plus, Trash2, CheckCircle2, AlertCircle, Layers, RefreshCw, ChevronRight } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import { Factory, Plus, Trash2, CheckCircle2, AlertCircle, Layers, RefreshCw, ChevronRight, ChevronDown } from 'lucide-react';
 import { api } from '../../api';
+
+// ─── Searchable Select Dropdown (Portaled) ─────────────────────────────
+function SearchableSelect({ value, onChange, options, placeholder = 'Search...', required = false, style = {}, inputStyle = {} }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [coords, setCoords] = useState({ top: 0, left: 0, width: 0 });
+  const containerRef = useRef(null);
+  const dropdownRef = useRef(null);
+
+  const updateCoords = () => {
+    if (containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const dropdownHeight = 220;
+      const showAbove = spaceBelow < dropdownHeight && rect.top > dropdownHeight;
+      setCoords({
+        top: showAbove ? rect.top - dropdownHeight - 4 : rect.bottom + 4,
+        left: rect.left,
+        width: Math.max(rect.width, 180)
+      });
+    }
+  };
+
+  useEffect(() => {
+    if (open) {
+      updateCoords();
+      const handleScroll = (e) => {
+        if (dropdownRef.current && dropdownRef.current.contains(e.target)) return;
+        updateCoords();
+      };
+      window.addEventListener('scroll', handleScroll, true);
+      window.addEventListener('resize', updateCoords);
+      return () => {
+        window.removeEventListener('scroll', handleScroll, true);
+        window.removeEventListener('resize', updateCoords);
+      };
+    }
+  }, [open]);
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (
+        containerRef.current && !containerRef.current.contains(e.target) &&
+        dropdownRef.current && !dropdownRef.current.contains(e.target)
+      ) {
+        setOpen(false);
+        setQuery('');
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const filtered = query
+    ? options.filter(o => o.label.toLowerCase().includes(query.toLowerCase()) || String(o.value).toLowerCase().includes(query.toLowerCase()))
+    : options;
+
+  const matchedOpt = options.find(o => String(o.value) === String(value));
+  const displayLabel = matchedOpt ? matchedOpt.label : '';
+
+  const handleSelect = (optVal) => {
+    onChange(optVal);
+    setOpen(false);
+    setQuery('');
+  };
+
+  return (
+    <div ref={containerRef} style={{ position: 'relative', ...style }}>
+      <div style={{ position: 'relative' }}>
+        <input
+          type="text"
+          value={open ? query : displayLabel}
+          onChange={e => { setQuery(e.target.value); setOpen(true); updateCoords(); }}
+          onFocus={() => { setOpen(true); setQuery(''); updateCoords(); }}
+          placeholder={placeholder}
+          required={required && !value}
+          className="form-input"
+          style={{ paddingRight: '28px', fontSize: '12px', padding: '6px 28px 6px 8px', ...inputStyle }}
+        />
+        <ChevronDown
+          size={13}
+          color="var(--text-dim)"
+          style={{
+            position: 'absolute', right: '8px', top: '50%',
+            transform: open ? 'translateY(-50%) rotate(180deg)' : 'translateY(-50%)',
+            transition: 'transform 0.15s ease',
+            pointerEvents: 'none'
+          }}
+        />
+      </div>
+      {open && createPortal(
+        <div
+          ref={dropdownRef}
+          style={{
+            position: 'fixed',
+            top: `${coords.top}px`,
+            left: `${coords.left}px`,
+            width: `${coords.width}px`,
+            zIndex: 999999,
+            background: 'var(--bg-card, #1e293b)',
+            border: '1px solid var(--border-color, rgba(255,255,255,0.15))',
+            borderRadius: '8px',
+            maxHeight: '220px',
+            overflowY: 'auto',
+            boxShadow: '0 16px 40px rgba(0,0,0,0.65)'
+          }}
+        >
+          {filtered.length === 0 ? (
+            <div style={{ padding: '8px 10px', fontSize: '12px', color: 'var(--text-muted, #94a3b8)' }}>
+              No matches found
+            </div>
+          ) : (
+            filtered.map(opt => (
+              <div
+                key={opt.value}
+                onMouseDown={() => handleSelect(String(opt.value))}
+                style={{
+                  padding: '7px 10px', cursor: 'pointer', fontSize: '12px',
+                  color: String(opt.value) === String(value) ? 'var(--emerald, #10b981)' : 'var(--text-main, #f8fafc)',
+                  background: String(opt.value) === String(value) ? 'rgba(16,185,129,0.12)' : 'transparent',
+                  borderBottom: '1px solid var(--border-color, rgba(255,255,255,0.06))'
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
+                onMouseLeave={e => e.currentTarget.style.background = String(opt.value) === String(value) ? 'rgba(16,185,129,0.12)' : 'transparent'}
+              >
+                {opt.label}
+              </div>
+            ))
+          )}
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+}
 
 export default function ProductionEntryModal({
   isOpen,
@@ -357,20 +493,19 @@ export default function ProductionEntryModal({
                         {outputs.map((out) => (
                           <tr key={out.id}>
                             <td>
-                              <select
-                                className="form-select"
-                                style={{ padding: '6px 10px', fontSize: '12px' }}
+                              <SearchableSelect
                                 value={out.finishedProductId}
-                                onChange={e => handleOutputChange(out.id, 'finishedProductId', e.target.value)}
+                                onChange={v => handleOutputChange(out.id, 'finishedProductId', v)}
+                                options={[
+                                  { value: '', label: 'Select Finished Product...' },
+                                  ...finishedGoods.map(fg => ({
+                                    value: String(fg.id),
+                                    label: `${fg.product_name} ${fg.gsm ? `(${fg.gsm} GSM)` : ''} ${fg.width_size ? `[${fg.width_size}]` : ''} - ${fg.product_code}`
+                                  }))
+                                ]}
+                                placeholder="Search finished product..."
                                 required
-                              >
-                                <option value="">Select Finished Product...</option>
-                                {finishedGoods.map(fg => (
-                                  <option key={fg.id} value={fg.id}>
-                                    {fg.product_name} {fg.gsm ? `(${fg.gsm} GSM)` : ''} {fg.width_size ? `[${fg.width_size}]` : ''} - {fg.product_code}
-                                  </option>
-                                ))}
-                              </select>
+                              />
                             </td>
 
                             <td>

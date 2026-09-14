@@ -1,6 +1,64 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, Edit2, Trash2, RefreshCw, Package, Layers, Users, UserCheck, Cpu, Clock, AlertTriangle, Building2, Save, Key, ShieldCheck, UserPlus, Lock } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Plus, Edit2, Trash2, RefreshCw, Package, Layers, Users, UserCheck, Cpu, Clock, AlertTriangle, Building2, Save, Key, ShieldCheck, UserPlus, Lock, ChevronDown } from 'lucide-react';
 import { api } from '../../api';
+
+// ─── Searchable Combobox (inline for MastersPage) ───────────────────────────
+function SearchableSelect({ value, onChange, options, placeholder = 'Search or type...', required = false }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const ref = useRef(null);
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+  const filtered = query ? options.filter(o => o.label.toLowerCase().includes(query.toLowerCase())) : options;
+  const displayLabel = options.find(o => o.value === value)?.label || value || '';
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <div style={{ position: 'relative' }}>
+        <input
+          type="text"
+          value={open ? query : displayLabel}
+          onChange={e => { setQuery(e.target.value); onChange(e.target.value); setOpen(true); }}
+          onFocus={() => { setOpen(true); setQuery(''); }}
+          placeholder={placeholder}
+          required={required && !value}
+          className="form-input"
+          style={{ paddingRight: '32px' }}
+        />
+        <ChevronDown size={14} color="var(--text-dim)" style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+      </div>
+      {open && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 9999,
+          background: 'var(--bg-card)', border: '1px solid var(--border-color)',
+          borderRadius: '8px', marginTop: '3px', maxHeight: '200px', overflowY: 'auto',
+          boxShadow: '0 10px 30px rgba(0,0,0,0.4)'
+        }}>
+          {filtered.length === 0 && query && (
+            <div style={{ padding: '8px 12px', color: 'var(--text-muted)', fontSize: '12px', cursor: 'pointer' }}
+              onMouseDown={() => { onChange(query); setOpen(false); setQuery(''); }}>
+              ✚ Use "{query}" as custom colour
+            </div>
+          )}
+          {filtered.map(opt => (
+            <div key={opt.value} onMouseDown={() => { onChange(opt.value); setOpen(false); setQuery(''); }}
+              style={{
+                padding: '8px 12px', cursor: 'pointer', fontSize: '12.5px',
+                color: opt.value === value ? 'var(--primary)' : 'var(--text-main)',
+                background: opt.value === value ? 'rgba(99,102,241,0.1)' : 'transparent',
+                borderBottom: '1px solid var(--border-color)'
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-hover)'}
+              onMouseLeave={e => e.currentTarget.style.background = opt.value === value ? 'rgba(99,102,241,0.1)' : 'transparent'}
+            >{opt.label}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Generic add/edit modal
 function MasterModal({ isOpen, title, fields, initialData, onClose, onSubmit }) {
@@ -57,16 +115,28 @@ function MasterModal({ isOpen, title, fields, initialData, onClose, onSubmit }) 
                 <div key={f.key} className={`form-group ${f.fullWidth ? 'full-width' : ''}`}>
                   <label className="form-label">{f.label}</label>
                   {f.type === 'select' ? (
-                    <select
-                      className="form-select"
+                    <div style={{ position: 'relative' }}>
+                      <select
+                        className="form-select"
+                        value={formData[f.key] || ''}
+                        onChange={e => setFormData({ ...formData, [f.key]: e.target.value })}
+                        required={f.required}
+                        style={{ paddingRight: '32px', appearance: 'none' }}
+                      >
+                        {f.options?.map(opt => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                      <ChevronDown size={13} color="var(--text-dim)" style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+                    </div>
+                  ) : f.type === 'combobox' ? (
+                    <SearchableSelect
                       value={formData[f.key] || ''}
-                      onChange={e => setFormData({ ...formData, [f.key]: e.target.value })}
+                      onChange={v => setFormData({ ...formData, [f.key]: v })}
+                      options={f.options || []}
+                      placeholder={f.placeholder || 'Search or type custom...'}
                       required={f.required}
-                    >
-                      {f.options?.map(opt => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                      ))}
-                    </select>
+                    />
                   ) : f.type === 'textarea' ? (
                     <textarea
                       className="form-textarea"
@@ -179,6 +249,7 @@ export default function MastersPage() {
   const [machines, setMachines]           = useState([]);
   const [shifts, setShifts]               = useState([]);
   const [managers, setManagers]           = useState([]);
+  const [staff, setStaff]                 = useState([]);
   const [bankAccounts, setBankAccounts]   = useState([]);
   const [managerUsers, setManagerUsers]   = useState([]);
   const [showUserModal, setShowUserModal] = useState(false);
@@ -231,6 +302,7 @@ export default function MastersPage() {
           setMachines(data.machines || []);
           setShifts(data.shifts || []);
           setManagers(data.managers || []);
+          if (data.staff) setStaff(data.staff);
           setBankAccounts(data.bankAccounts || []);
           setManagerUsers(data.managerUsers || []);
           if (data.companySettings) {
@@ -243,7 +315,7 @@ export default function MastersPage() {
       }
 
       // 2. Resilient fallback with safe individual catch handlers
-      const [rm, fg, cust, supp, mach, sh, mgrs, banks, comp, mgrUsers] = await Promise.all([
+      const [rm, fg, cust, supp, mach, sh, mgrs, banks, comp, mgrUsers, stf] = await Promise.all([
         api.getRawMaterials().catch(() => []),
         api.getFinishedGoods().catch(() => []),
         api.getCustomers().catch(() => []),
@@ -253,7 +325,8 @@ export default function MastersPage() {
         api.getManagers().catch(() => []),
         api.getBankAccounts().catch(() => []),
         api.getCompanySettings().catch(() => ({})),
-        api.getManagerUsers().catch(() => [])
+        api.getManagerUsers().catch(() => []),
+        api.getStaff().catch(() => [])
       ]);
       setRawMaterials(rm || []);
       setFinishedGoods(fg || []);
@@ -264,6 +337,7 @@ export default function MastersPage() {
       setManagers(mgrs || []);
       setBankAccounts(banks || []);
       setManagerUsers(mgrUsers || []);
+      setStaff(stf || []);
       if (comp) {
         setCompanySettings(prev => ({ ...prev, ...comp }));
       }
@@ -372,6 +446,7 @@ export default function MastersPage() {
       if (type === 'supplier') await api.updateSupplier(id, { status: newStatus });
       if (type === 'machine')  await api.updateMachine(id, { status: newStatus });
       if (type === 'manager')  await api.updateManagerStatus(id, newStatus);
+      if (type === 'staff')    await api.updateStaff(id, { status: newStatus });
       await loadAll();
       showSuccess(`Status updated to ${newStatus}`);
     } catch (err) {
@@ -389,6 +464,7 @@ export default function MastersPage() {
     if (tab === 'machines')       return { name: record.name, capacityKgPerDay: record.capacity_kg_per_day };
     if (tab === 'shifts')         return { name: record.name, startTime: record.start_time, endTime: record.end_time };
     if (tab === 'managers')       return { name: record.name, phone: record.phone };
+    if (tab === 'staff')          return { name: record.name, designation: record.designation || '', department: record.department || '', phone: record.phone || '', status: record.status || 'active' };
     return {};
   };
 
@@ -406,6 +482,7 @@ export default function MastersPage() {
       else if (tab === 'shifts')         await api.updateShift(editRecord.id, data);
       else if (tab === 'managers')       await api.updateManager(editRecord.id, data);
       else if (tab === 'banks')          await api.updateBankAccount(editRecord.id, data);
+      else if (tab === 'staff')          await api.updateStaff(editRecord.id, data);
       showSuccess('Record updated successfully!');
     } else {
       if (tab === 'raw-materials')  await api.createRawMaterial(data);
@@ -416,6 +493,7 @@ export default function MastersPage() {
       else if (tab === 'shifts')         await api.createShift(data);
       else if (tab === 'managers')       await api.createManager(data);
       else if (tab === 'banks')          await api.createBankAccount(data);
+      else if (tab === 'staff')          await api.createStaff(data);
       showSuccess('Record added successfully!');
     }
     await loadAll();
@@ -436,6 +514,7 @@ export default function MastersPage() {
       else if (tab === 'shifts')         await api.deleteShift(id);
       else if (tab === 'managers')       await api.deleteManager(id);
       else if (tab === 'banks')          await api.deleteBankAccount(id);
+      else if (tab === 'staff')          await api.deleteStaff(id);
       setDeleteTarget(null);
       await loadAll();
       showSuccess('Record deleted (or deactivated) successfully!');
@@ -455,6 +534,7 @@ export default function MastersPage() {
     { id: 'banks', label: 'Bank Master', icon: <Building2 size={14} />, count: bankAccounts.length },
     { id: 'machines', label: 'Machines', icon: <Cpu size={14} />, count: machines.length },
     { id: 'shifts', label: 'Shifts', icon: <Clock size={14} />, count: shifts.length },
+    { id: 'staff', label: 'Staff', icon: <Users size={14} />, count: staff.length },
     { id: 'managers', label: 'Managers', icon: <Users size={14} />, count: managers.length + managerUsers.length },
     { id: 'company', label: 'Company & Tax Settings', icon: <Building2 size={14} /> },
   ];
@@ -509,15 +589,15 @@ export default function MastersPage() {
     { key: 'gsm', label: 'GSM *', type: 'number', required: true, placeholder: 'e.g. 150' },
     { key: 'widthSize', label: 'Width/Size *', required: true, placeholder: 'e.g. 16 FT' },
     { key: 'lengthVal', label: 'Length', placeholder: 'e.g. 100 M' },
-    { key: 'colour', label: 'Colour *', required: true, type: 'select', defaultValue: 'Blue', options: [
-      { value: 'Blue', label: 'Blue' },
-      { value: 'Green', label: 'Green' },
-      { value: 'Yellow', label: 'Yellow' },
-      { value: 'Black', label: 'Black' },
-      { value: 'Silver', label: 'Silver' },
-      { value: 'White', label: 'White' },
-      { value: 'Orange', label: 'Orange' },
-      { value: 'Red', label: 'Red' },
+    { key: 'colour', label: 'Colour *', required: true, type: 'combobox', defaultValue: 'ORANGE/BLUE', options: [
+      { value: 'ORANGE/BLUE', label: 'ORANGE/BLUE' },
+      { value: 'SILVER/BLACK', label: 'SILVER/BLACK' },
+      { value: 'GREEN/BLACK', label: 'GREEN/BLACK' },
+      { value: 'SILVER/WHITE', label: 'SILVER/WHITE' },
+      { value: 'WHITE/WHITE', label: 'WHITE/WHITE' },
+      { value: 'BLUE/BLUE', label: 'BLUE/BLUE' },
+      { value: 'BLACK/BLACK', label: 'BLACK/BLACK' },
+      { value: 'ORANGE/NAVY BLUE', label: 'ORANGE/NAVY BLUE' },
     ]},
     { key: 'grade', label: 'Grade', defaultValue: 'Grade A', type: 'select', options: [
       { value: 'Grade A', label: 'Grade A' },
@@ -567,6 +647,17 @@ export default function MastersPage() {
     { key: 'phone', label: 'Phone', placeholder: '+91 98200 12345' },
   ];
 
+  const staffFields = [
+    { key: 'name', label: 'Staff Name *', required: true, placeholder: 'e.g. Ramesh Kumar' },
+    { key: 'designation', label: 'Designation', placeholder: 'e.g. Machine Operator / Helper' },
+    { key: 'department', label: 'Department', placeholder: 'e.g. Production / Maintenance / Packaging' },
+    { key: 'phone', label: 'Phone Number', placeholder: '+91 98200 12345' },
+    { key: 'status', label: 'Status', type: 'select', defaultValue: 'active', options: [
+      { value: 'active', label: 'Active' },
+      { value: 'inactive', label: 'Inactive' }
+    ]}
+  ];
+
   const currentFields = () => {
     if (tab === 'raw-materials')  return rmFields;
     if (tab === 'finished-goods') return fgFields;
@@ -576,6 +667,7 @@ export default function MastersPage() {
     if (tab === 'machines')       return machFields;
     if (tab === 'shifts')         return shiftFields;
     if (tab === 'managers')       return mgrFields;
+    if (tab === 'staff')          return staffFields;
     return [];
   };
 
@@ -899,6 +991,53 @@ export default function MastersPage() {
                   </td>
                 </tr>
               ))}
+            </tbody>
+          </table>
+        ) : tab === 'staff' ? (
+          <table className="custom-table" style={{ width: '100%' }}>
+            <thead>
+              <tr>
+                <th>Staff Name</th>
+                <th>Designation</th>
+                <th>Department</th>
+                <th>Phone</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {staff.length === 0 ? (
+                <tr>
+                  <td colSpan={6} style={{ textAlign: 'center', padding: '30px', color: 'var(--text-muted)' }}>
+                    No staff members added yet. Click "Add New" to add staff.
+                  </td>
+                </tr>
+              ) : (
+                staff.map(s => (
+                  <tr key={s.id}>
+                    <td style={{ fontWeight: '600' }}>{s.name}</td>
+                    <td style={{ color: 'var(--text-muted)' }}>{s.designation || '—'}</td>
+                    <td style={{ color: 'var(--text-muted)' }}>{s.department || '—'}</td>
+                    <td style={{ color: 'var(--text-muted)' }}>{s.phone || '—'}</td>
+                    <td>
+                      <span
+                        className={`pill ${s.status === 'active' ? 'pill-emerald' : 'pill-rose'}`}
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => toggleStatus('staff', s.id, s.status)}
+                        title="Click to toggle status"
+                      >
+                        {s.status}
+                      </span>
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                        <ActionBtn icon={<Edit2 size={12} />} color="var(--primary)" title="Edit" onClick={() => openEdit({ ...s, ...editFieldMap(s) })} />
+                        <ActionBtn icon={<Trash2 size={12} />} color="var(--rose)" title="Delete" onClick={() => confirmDelete(s.id, s.name)} />
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         ) : tab === 'managers' ? (

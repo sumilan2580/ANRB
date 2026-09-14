@@ -1,6 +1,142 @@
-import React, { useState, useEffect } from 'react';
-import { Truck, CheckCircle2, AlertCircle, ShieldAlert, MapPin, FileText } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import { Truck, CheckCircle2, AlertCircle, ShieldAlert, MapPin, FileText, ChevronDown } from 'lucide-react';
 import { api } from '../../api';
+
+// ─── Searchable Select Dropdown (Portaled) ─────────────────────────────
+function SearchableSelect({ value, onChange, options, placeholder = 'Search...', required = false, style = {}, inputStyle = {} }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [coords, setCoords] = useState({ top: 0, left: 0, width: 0 });
+  const containerRef = useRef(null);
+  const dropdownRef = useRef(null);
+
+  const updateCoords = () => {
+    if (containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const dropdownHeight = 220;
+      const showAbove = spaceBelow < dropdownHeight && rect.top > dropdownHeight;
+      setCoords({
+        top: showAbove ? rect.top - dropdownHeight - 4 : rect.bottom + 4,
+        left: rect.left,
+        width: Math.max(rect.width, 200)
+      });
+    }
+  };
+
+  useEffect(() => {
+    if (open) {
+      updateCoords();
+      const handleScroll = (e) => {
+        if (dropdownRef.current && dropdownRef.current.contains(e.target)) return;
+        updateCoords();
+      };
+      window.addEventListener('scroll', handleScroll, true);
+      window.addEventListener('resize', updateCoords);
+      return () => {
+        window.removeEventListener('scroll', handleScroll, true);
+        window.removeEventListener('resize', updateCoords);
+      };
+    }
+  }, [open]);
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (
+        containerRef.current && !containerRef.current.contains(e.target) &&
+        dropdownRef.current && !dropdownRef.current.contains(e.target)
+      ) {
+        setOpen(false);
+        setQuery('');
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const filtered = query
+    ? options.filter(o => o.label.toLowerCase().includes(query.toLowerCase()) || String(o.value).toLowerCase().includes(query.toLowerCase()))
+    : options;
+
+  const matchedOpt = options.find(o => String(o.value) === String(value));
+  const displayLabel = matchedOpt ? matchedOpt.label : '';
+
+  const handleSelect = (optVal) => {
+    onChange(optVal);
+    setOpen(false);
+    setQuery('');
+  };
+
+  return (
+    <div ref={containerRef} style={{ position: 'relative', ...style }}>
+      <div style={{ position: 'relative' }}>
+        <input
+          type="text"
+          value={open ? query : displayLabel}
+          onChange={e => { setQuery(e.target.value); setOpen(true); updateCoords(); }}
+          onFocus={() => { setOpen(true); setQuery(''); updateCoords(); }}
+          placeholder={placeholder}
+          required={required && !value}
+          className="form-input"
+          style={{ paddingRight: '28px', fontSize: '13px', ...inputStyle }}
+        />
+        <ChevronDown
+          size={14}
+          color="var(--text-dim)"
+          style={{
+            position: 'absolute', right: '10px', top: '50%',
+            transform: open ? 'translateY(-50%) rotate(180deg)' : 'translateY(-50%)',
+            transition: 'transform 0.15s ease',
+            pointerEvents: 'none'
+          }}
+        />
+      </div>
+      {open && createPortal(
+        <div
+          ref={dropdownRef}
+          style={{
+            position: 'fixed',
+            top: `${coords.top}px`,
+            left: `${coords.left}px`,
+            width: `${coords.width}px`,
+            zIndex: 999999,
+            background: 'var(--bg-card, #1e293b)',
+            border: '1px solid var(--border-color, rgba(255,255,255,0.15))',
+            borderRadius: '8px',
+            maxHeight: '220px',
+            overflowY: 'auto',
+            boxShadow: '0 16px 40px rgba(0,0,0,0.65)'
+          }}
+        >
+          {filtered.length === 0 ? (
+            <div style={{ padding: '8px 10px', fontSize: '12px', color: 'var(--text-muted, #94a3b8)' }}>
+              No matches found
+            </div>
+          ) : (
+            filtered.map(opt => (
+              <div
+                key={opt.value}
+                onMouseDown={() => handleSelect(String(opt.value))}
+                style={{
+                  padding: '8px 12px', cursor: 'pointer', fontSize: '12.5px',
+                  color: String(opt.value) === String(value) ? 'var(--cyan, #38bdf8)' : 'var(--text-main, #f8fafc)',
+                  background: String(opt.value) === String(value) ? 'rgba(56,189,248,0.12)' : 'transparent',
+                  borderBottom: '1px solid var(--border-color, rgba(255,255,255,0.06))'
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
+                onMouseLeave={e => e.currentTarget.style.background = String(opt.value) === String(value) ? 'rgba(56,189,248,0.12)' : 'transparent'}
+              >
+                {opt.label}
+              </div>
+            ))
+          )}
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+}
 
 const DEFAULT_TERMS = `1. Goods once sold will not be taken back or exchanged.
 2. Payment terms: Subject to realization of Cheque / RTGS.
@@ -274,12 +410,16 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
                   </div>
                   <div className="form-group">
                     <label className="form-label">Customer *</label>
-                    <select className="form-select" value={customerId} onChange={e => handleCustomerChange(e.target.value)} required>
-                      {customers.length === 0 && <option value="">No active customers</option>}
-                      {customers.map(c => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
-                      ))}
-                    </select>
+                    <SearchableSelect
+                      value={customerId}
+                      onChange={v => handleCustomerChange(v)}
+                      options={[
+                        { value: '', label: 'Select Customer...' },
+                        ...customers.map(c => ({ value: String(c.id), label: c.name }))
+                      ]}
+                      placeholder="Search customer..."
+                      required
+                    />
                   </div>
                 </div>
 
@@ -308,30 +448,29 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
                 {/* Product Selection */}
                 <div className="form-group">
                   <label className="form-label">Finished Good Specification *</label>
-                  <select
-                    className="form-select"
+                  <SearchableSelect
                     value={finishedProductId}
-                    onChange={e => handleFGChange(e.target.value)}
+                    onChange={v => handleFGChange(v)}
+                    options={[
+                      { value: '', label: 'Select Finished Product...' },
+                      ...finishedGoods.map(fg => {
+                        const fgStock = Number(fg.current_stock_kg || 0);
+                        const outOfStock = fgStock <= 0;
+                        const fgLow = !outOfStock && fg.min_stock_alert > 0 && fgStock <= fg.min_stock_alert;
+                        const stockLabel = outOfStock
+                          ? ' — ⛔ No Stock'
+                          : fgLow
+                            ? ' | ⚠️ Low Stock'
+                            : ` | Stock: ${fgStock.toLocaleString()} KG`;
+                        return {
+                          value: String(fg.id),
+                          label: `${fg.product_code}: ${fg.product_name} — ${fg.gsm} GSM, ${fg.width_size}, ${fg.colour} (${fg.grade})${stockLabel}`
+                        };
+                      })
+                    ]}
+                    placeholder="Search product code, name, colour, gsm..."
                     required
-                    style={!isAdmin && isNoStock ? { borderColor: 'var(--rose)' } : {}}
-                  >
-                    {finishedGoods.length === 0 && <option value="">No active finished goods</option>}
-                    {finishedGoods.map(fg => {
-                      const fgStock = Number(fg.current_stock_kg || 0);
-                      const outOfStock = fgStock <= 0;
-                      const fgLow = !outOfStock && fg.min_stock_alert > 0 && fgStock <= fg.min_stock_alert;
-                      const stockLabel = outOfStock
-                        ? ' — ⛔ No Stock'
-                        : fgLow
-                          ? ' | ⚠️ Low Stock'
-                          : ` | Stock: ${fgStock.toLocaleString()} KG`;
-                      return (
-                        <option key={fg.id} value={fg.id} disabled={!isAdmin && outOfStock}>
-                          {fg.product_code}: {fg.product_name} — {fg.gsm} GSM, {fg.width_size}, {fg.colour} ({fg.grade}){stockLabel}
-                        </option>
-                      );
-                    })}
-                  </select>
+                  />
                   {selectedFG && (
                     <div style={{ marginTop: '6px' }}>
                       {isNoStock ? (

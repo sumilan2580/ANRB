@@ -659,6 +659,11 @@ app.get('/api/masters/all', async (req, res) => {
       bankAccounts = await db.prepare(`SELECT * FROM bank_accounts ORDER BY id ASC`).all();
     } catch (_) {}
 
+    let staff = [];
+    try {
+      staff = await db.prepare(`SELECT * FROM staff ${isManager ? "WHERE status = 'active'" : ""} ORDER BY id ASC`).all();
+    } catch (_) {}
+
     let managerUsers = [];
     try {
       managerUsers = await db.prepare(`SELECT id, username, role, name, status, manager_id, created_at FROM users WHERE role = 'manager' ORDER BY id ASC`).all();
@@ -677,6 +682,7 @@ app.get('/api/masters/all', async (req, res) => {
       machines: machines || [],
       shifts: shifts || [],
       managers: managers || [],
+      staff: staff || [],
       bankAccounts: bankAccounts || [],
       companySettings: companySettings || {},
       managerUsers: managerUsers || []
@@ -1348,6 +1354,233 @@ app.post('/api/managers/register', async (req, res) => {
   }
 });
 
+// =============================================================
+// STAFF MASTER & ATTENDANCE API
+// =============================================================
+app.get('/api/masters/staff', async (req, res) => {
+  try {
+    const { status } = req.query;
+    let query = 'SELECT * FROM staff';
+    const params = [];
+    if (status) {
+      query += ' WHERE status = ?';
+      params.push(status);
+    }
+    query += ' ORDER BY id ASC';
+    const rows = await db.prepare(query).all(...params);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/masters/staff', requireAdmin, async (req, res) => {
+  try {
+    const { name, phone, designation = 'Worker', department = '', wageType = 'Daily', wageAmount = 0, joiningDate, status = 'active' } = req.body;
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'Staff name is required.' });
+    }
+    const info = await db.prepare(`
+      INSERT INTO staff (name, phone, designation, department, wage_type, wage_amount, joining_date, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      name.trim(),
+      phone ? phone.trim() : null,
+      designation ? designation.trim() : 'Worker',
+      department ? department.trim() : '',
+      wageType || 'Daily',
+      Number(wageAmount || 0),
+      joiningDate || null,
+      status || 'active'
+    );
+    const created = await db.prepare('SELECT * FROM staff WHERE id = ?').get(info.lastInsertRowid);
+    res.status(201).json(created);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.put('/api/masters/staff/:id', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const existing = await db.prepare('SELECT * FROM staff WHERE id = ?').get(id);
+    if (!existing) return res.status(404).json({ error: 'Staff member not found.' });
+
+    const { name, phone, designation, department, wageType, wageAmount, joiningDate, status } = req.body;
+    await db.prepare(`
+      UPDATE staff
+      SET name = ?, phone = ?, designation = ?, department = ?, wage_type = ?, wage_amount = ?, joining_date = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      name ? name.trim() : existing.name,
+      phone !== undefined ? (phone ? phone.trim() : null) : existing.phone,
+      designation !== undefined ? designation.trim() : existing.designation,
+      department !== undefined ? department.trim() : (existing.department || ''),
+      wageType !== undefined ? wageType : existing.wage_type,
+      wageAmount !== undefined ? Number(wageAmount) : existing.wage_amount,
+      joiningDate !== undefined ? joiningDate : existing.joining_date,
+      status !== undefined ? status : existing.status,
+      id
+    );
+    const updated = await db.prepare('SELECT * FROM staff WHERE id = ?').get(id);
+    res.json(updated);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/masters/staff/:id', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const attCount = (await db.prepare('SELECT COUNT(*) as count FROM staff_attendance WHERE staff_id = ?').get(id))?.count || 0;
+    if (attCount > 0) {
+      await db.prepare("UPDATE staff SET status = 'inactive', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
+      return res.json({ message: 'Staff deactivated as attendance history exists.' });
+    }
+    await db.prepare('DELETE FROM staff WHERE id = ?').run(id);
+    res.json({ message: 'Staff deleted successfully.' });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Attendance Query
+app.get('/api/attendance', async (req, res) => {
+  try {
+    const { date, dateFrom, dateTo, month, staffId } = req.query;
+
+    if (month) {
+      const rows = await db.prepare(`
+        SELECT sa.*, s.name AS staff_name, s.name, s.designation, s.department
+        FROM staff_attendance sa
+        JOIN staff s ON sa.staff_id = s.id
+        WHERE sa.date LIKE ? AND s.status = 'active'
+        ORDER BY sa.date ASC, s.name ASC
+      `).all(`${month}%`);
+      return res.json(rows);
+    }
+
+    if (date) {
+      const rows = await db.prepare(`
+        SELECT s.id AS staff_id, s.id, s.name, s.name AS staff_name, s.phone, s.designation, s.department, s.wage_type, s.wage_amount, s.status AS staff_status,
+               a.id AS attendance_id, a.date, COALESCE(a.status, 'not_marked') AS status, a.status AS attendance_status, a.overtime_hours, a.remarks, a.marked_by, a.updated_at AS marked_at
+        FROM staff s
+        LEFT JOIN staff_attendance a ON s.id = a.staff_id AND a.date = ?
+        WHERE s.status = 'active'
+        ORDER BY s.id ASC
+      `).all(date);
+      return res.json(rows);
+    }
+
+    let query = `
+      SELECT a.*, s.name AS staff_name, s.name, s.designation AS staff_designation, s.designation, s.department, s.phone AS staff_phone
+      FROM staff_attendance a
+      JOIN staff s ON a.staff_id = s.id
+      WHERE 1=1
+    `;
+    const params = [];
+    if (dateFrom) {
+      query += ' AND a.date >= ?';
+      params.push(dateFrom);
+    }
+    if (dateTo) {
+      query += ' AND a.date <= ?';
+      params.push(dateTo);
+    }
+    if (staffId) {
+      query += ' AND a.staff_id = ?';
+      params.push(staffId);
+    }
+    query += ' ORDER BY a.date DESC, s.name ASC';
+    const records = await db.prepare(query).all(...params);
+    res.json(records);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Bulk Attendance Save / Upsert
+app.post('/api/attendance/bulk', async (req, res) => {
+  try {
+    const { date, records, markedBy, marked_by } = req.body;
+    if (!date) {
+      return res.status(400).json({ error: 'Date is required.' });
+    }
+    if (!Array.isArray(records) || records.length === 0) {
+      return res.status(400).json({ error: 'Attendance records array is required.' });
+    }
+
+    const finalMarkedBy = (req.role === 'manager' && req.manager)
+      ? req.manager.name
+      : (markedBy || marked_by || (req.user ? req.user.name : 'Admin'));
+
+    await runTransaction(async () => {
+      const upsert = db.prepare(`
+        INSERT INTO staff_attendance (staff_id, date, status, overtime_hours, remarks, marked_by, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(staff_id, date) DO UPDATE SET
+          status = excluded.status,
+          overtime_hours = excluded.overtime_hours,
+          remarks = excluded.remarks,
+          marked_by = excluded.marked_by,
+          updated_at = CURRENT_TIMESTAMP
+      `);
+
+      for (const rec of records) {
+        const sId = rec.staffId || rec.staff_id;
+        if (!sId) continue;
+        let st = rec.status || 'present';
+        // Normalize status to user specification: 'Full Day', 'Half Day', 'Not Present'
+        if (st === 'present' || st === 'Full Day') st = 'Full Day';
+        else if (st === 'half_day' || st === 'Half Day') st = 'Half Day';
+        else st = 'Not Present';
+
+        await upsert.run(
+          sId,
+          date,
+          st,
+          Number(rec.overtimeHours || rec.overtime_hours || 0),
+          rec.remarks || '',
+          finalMarkedBy
+        );
+      }
+    });
+
+    res.json({ success: true, count: records.length, date, markedBy: finalMarkedBy });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Monthly Attendance Summary
+app.get('/api/attendance/summary', async (req, res) => {
+  try {
+    const { month } = req.query; // YYYY-MM
+    const currentMonth = month || new Date().toISOString().substring(0, 7);
+
+    const rows = await db.prepare(`
+      SELECT s.id, s.id AS staff_id, s.name, s.name AS staff_name, s.designation, s.department, s.wage_type, s.wage_amount,
+             COALESCE(SUM(CASE WHEN a.status = 'Full Day' OR a.status = 'present' THEN 1 ELSE 0 END), 0) AS full_days,
+             COALESCE(SUM(CASE WHEN a.status = 'Half Day' OR a.status = 'half_day' THEN 1 ELSE 0 END), 0) AS half_days,
+             COALESCE(SUM(CASE WHEN a.status = 'Not Present' OR a.status = 'absent' THEN 1 ELSE 0 END), 0) AS absents,
+             COALESCE(SUM(CASE WHEN a.status = 'Not Present' OR a.status = 'absent' THEN 1 ELSE 0 END), 0) AS absent_days,
+             COALESCE(SUM(CASE WHEN a.status = 'Full Day' OR a.status = 'present' THEN 1.0 WHEN a.status = 'Half Day' OR a.status = 'half_day' THEN 0.5 ELSE 0 END), 0) AS payable_days,
+             COALESCE(SUM(a.overtime_hours), 0) AS total_overtime_hours,
+             COUNT(a.id) AS total_marked_days,
+             COUNT(a.id) AS marked_days
+      FROM staff s
+      LEFT JOIN staff_attendance a ON s.id = a.staff_id AND a.date LIKE ?
+      WHERE s.status = 'active'
+      GROUP BY s.id
+      ORDER BY s.name ASC
+    `).all(`${currentMonth}%`);
+
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // -------------------------------------------------------------
 // COMPANY SETTINGS API
 // -------------------------------------------------------------
@@ -1978,10 +2211,19 @@ app.get('/api/transactions/purchases', async (req, res) => {
       WHERE pi.purchase_id = ?
     `);
 
-    const result = await Promise.all(rows.map(async r => ({
-      ...r,
-      items: await getItems.all(r.id)
-    })));
+    const result = await Promise.all(rows.map(async r => {
+      let parsedEl = [];
+      try {
+        parsedEl = r.el_charges ? (typeof r.el_charges === 'string' ? JSON.parse(r.el_charges) : r.el_charges) : [];
+      } catch (e) {
+        parsedEl = [];
+      }
+      return {
+        ...r,
+        el_charges: parsedEl,
+        items: await getItems.all(r.id)
+      };
+    }));
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1999,6 +2241,7 @@ app.post('/api/transactions/purchases', async (req, res) => {
       discountAmount = 0,
       otherCharges = 0,
       roundOff = 0,
+      elCharges = [],
       remarks = '',
       managerName = 'Admin',
       managerId = null,
@@ -2079,7 +2322,15 @@ app.post('/api/transactions/purchases', async (req, res) => {
     const billDiscount = Number(discountAmount || 0);
     const billOther = Number(otherCharges || 0);
     const billRound = Number(roundOff || 0);
-    const grandTotal = Number((totalTaxable + totalCgst + totalSgst + totalIgst + billOther - billDiscount + billRound).toFixed(2));
+    const validElCharges = Array.isArray(elCharges)
+      ? elCharges.filter(c => c && c.label && Number(c.amount) > 0).map(c => ({
+          id: c.id || Date.now(),
+          label: String(c.label).trim(),
+          amount: Number(c.amount)
+        }))
+      : [];
+    const totalElCharges = validElCharges.reduce((acc, c) => acc + c.amount, 0);
+    const grandTotal = Number((totalTaxable + totalCgst + totalSgst + totalIgst + billOther + totalElCharges - billDiscount + billRound).toFixed(2));
 
     const finalManagerName = (req.role === 'manager' && req.manager) ? req.manager.name : (managerName || 'Admin');
     const finalManagerId = (req.role === 'manager' && req.manager) ? req.manager.id : (managerId || null);
@@ -2095,13 +2346,14 @@ app.post('/api/transactions/purchases', async (req, res) => {
           purchase_code, date, supplier_id, raw_material_id, quantity_kg, rate_per_kg,
           taxable_amount, gst_percent, cgst_amount, sgst_amount, igst_amount, total_amount,
           purchase_type, discount_amount, other_charges, round_off, payment_mode,
-          invoice_number, remarks, manager_id, manager_name, device_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          invoice_number, remarks, manager_id, manager_name, device_id, el_charges
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         code, date, supplierId, firstItem.rawMaterialId, firstItem.quantity, firstItem.rate,
         totalTaxable, firstItem.gstPercent, totalCgst, totalSgst, totalIgst, grandTotal,
         purchaseType, billDiscount, billOther, billRound, paymentMode,
-        invoiceNumber, remarks, finalManagerId, finalManagerName, finalDeviceId
+        invoiceNumber, remarks, finalManagerId, finalManagerName, finalDeviceId,
+        JSON.stringify(validElCharges)
       );
       const purchaseId = info.lastInsertRowid;
 
@@ -2154,6 +2406,7 @@ app.post('/api/transactions/purchases', async (req, res) => {
         total_amount: grandTotal,
         manager_name: finalManagerName,
         current_stock: await getRawMaterialStock(firstItem.rawMaterialId),
+        el_charges: validElCharges,
         items: processedLines
       };
     });
@@ -2183,7 +2436,14 @@ app.get('/api/transactions/purchases/:id', async (req, res) => {
       WHERE pi.purchase_id = ?
     `).all(pur.id);
 
-    res.json({ ...pur, items });
+    let parsedEl = [];
+    try {
+      parsedEl = pur.el_charges ? (typeof pur.el_charges === 'string' ? JSON.parse(pur.el_charges) : pur.el_charges) : [];
+    } catch (e) {
+      parsedEl = [];
+    }
+
+    res.json({ ...pur, el_charges: parsedEl, items });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2204,6 +2464,7 @@ app.put('/api/transactions/purchases/:id', requireAdmin, async (req, res) => {
       discountAmount = 0,
       otherCharges = 0,
       roundOff = 0,
+      elCharges = [],
       remarks = '',
       items
     } = req.body;
@@ -2283,7 +2544,15 @@ app.put('/api/transactions/purchases/:id', requireAdmin, async (req, res) => {
     const billDiscount = Number(discountAmount || 0);
     const billOther = Number(otherCharges || 0);
     const billRound = Number(roundOff || 0);
-    const grandTotal = Number((totalTaxable + totalCgst + totalSgst + totalIgst + billOther - billDiscount + billRound).toFixed(2));
+    const validElCharges = Array.isArray(elCharges)
+      ? elCharges.filter(c => c && c.label && Number(c.amount) > 0).map(c => ({
+          id: c.id || Date.now(),
+          label: String(c.label).trim(),
+          amount: Number(c.amount)
+        }))
+      : [];
+    const totalElCharges = validElCharges.reduce((acc, c) => acc + c.amount, 0);
+    const grandTotal = Number((totalTaxable + totalCgst + totalSgst + totalIgst + billOther + totalElCharges - billDiscount + billRound).toFixed(2));
 
     const result = await runTransaction(async () => {
       // 1. Reverse previous stock movements
@@ -2311,13 +2580,13 @@ app.put('/api/transactions/purchases/:id', requireAdmin, async (req, res) => {
         SET date = ?, supplier_id = ?, raw_material_id = ?, quantity_kg = ?, rate_per_kg = ?,
             taxable_amount = ?, gst_percent = ?, cgst_amount = ?, sgst_amount = ?, igst_amount = ?, total_amount = ?,
             purchase_type = ?, discount_amount = ?, other_charges = ?, round_off = ?, payment_mode = ?,
-            invoice_number = ?, remarks = ?, updated_at = CURRENT_TIMESTAMP
+            invoice_number = ?, remarks = ?, el_charges = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).run(
         date, supp.id, firstItem.rawMaterialId, firstItem.quantity, firstItem.rate,
         totalTaxable, firstItem.gstPercent, totalCgst, totalSgst, totalIgst, grandTotal,
         purchaseType, billDiscount, billOther, billRound, paymentMode,
-        invoiceNumber, remarks, pur.id
+        invoiceNumber, remarks, JSON.stringify(validElCharges), pur.id
       );
 
       // 5. Insert new purchase items and add new stock movements
@@ -6612,7 +6881,6 @@ app.get('/api/health', async (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Start Express Server
 async function startServer() {
   await initDb();
   return new Promise((resolve) => {

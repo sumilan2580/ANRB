@@ -1,6 +1,171 @@
-import React, { useState, useEffect } from 'react';
-import { ShoppingBag, Plus, Trash2, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import { ShoppingBag, Plus, Trash2, CheckCircle2, AlertCircle, RefreshCw, ChevronDown, Search } from 'lucide-react';
 import { api } from '../../api';
+
+// ─── Searchable Select Dropdown (Portaled to prevent table clipping) ──────────
+function SearchableSelect({
+  value,
+  onChange,
+  options,
+  placeholder = 'Search...',
+  required = false,
+  allowCustom = false,
+  style = {},
+  inputStyle = {}
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [coords, setCoords] = useState({ top: 0, left: 0, width: 0 });
+  const containerRef = useRef(null);
+  const dropdownRef = useRef(null);
+
+  const updateCoords = () => {
+    if (containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const dropdownHeight = 220;
+      const showAbove = spaceBelow < dropdownHeight && rect.top > dropdownHeight;
+      setCoords({
+        top: showAbove ? rect.top - dropdownHeight - 4 : rect.bottom + 4,
+        left: rect.left,
+        width: Math.max(rect.width, 160)
+      });
+    }
+  };
+
+  useEffect(() => {
+    if (open) {
+      updateCoords();
+      const handleScroll = (e) => {
+        if (dropdownRef.current && dropdownRef.current.contains(e.target)) return;
+        updateCoords();
+      };
+      window.addEventListener('scroll', handleScroll, true);
+      window.addEventListener('resize', updateCoords);
+      return () => {
+        window.removeEventListener('scroll', handleScroll, true);
+        window.removeEventListener('resize', updateCoords);
+      };
+    }
+  }, [open]);
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (
+        containerRef.current && !containerRef.current.contains(e.target) &&
+        dropdownRef.current && !dropdownRef.current.contains(e.target)
+      ) {
+        setOpen(false);
+        setQuery('');
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const filtered = query
+    ? options.filter(o => o.label.toLowerCase().includes(query.toLowerCase()) || String(o.value).toLowerCase().includes(query.toLowerCase()))
+    : options;
+
+  const matchedOpt = options.find(o => String(o.value) === String(value));
+  const displayLabel = matchedOpt ? matchedOpt.label : (allowCustom ? (value || '') : '');
+
+  const handleInputChange = (e) => {
+    const val = e.target.value;
+    setQuery(val);
+    setOpen(true);
+    updateCoords();
+    if (allowCustom) {
+      onChange(val);
+    }
+  };
+
+  const handleSelect = (optVal) => {
+    onChange(optVal);
+    setOpen(false);
+    setQuery('');
+  };
+
+  return (
+    <div ref={containerRef} style={{ position: 'relative', ...style }}>
+      <div style={{ position: 'relative' }}>
+        <input
+          type="text"
+          value={open ? query : displayLabel}
+          onChange={handleInputChange}
+          onFocus={() => { setOpen(true); setQuery(''); updateCoords(); }}
+          placeholder={placeholder}
+          required={required && !value}
+          className="form-input"
+          style={{ paddingRight: '28px', fontSize: '12px', padding: '6px 28px 6px 8px', ...inputStyle }}
+        />
+        <ChevronDown
+          size={13}
+          color="var(--text-dim)"
+          style={{
+            position: 'absolute', right: '8px', top: '50%',
+            transform: open ? 'translateY(-50%) rotate(180deg)' : 'translateY(-50%)',
+            transition: 'transform 0.15s ease',
+            pointerEvents: 'none'
+          }}
+        />
+      </div>
+      {open && createPortal(
+        <div
+          ref={dropdownRef}
+          style={{
+            position: 'fixed',
+            top: `${coords.top}px`,
+            left: `${coords.left}px`,
+            width: `${coords.width}px`,
+            zIndex: 999999,
+            background: 'var(--bg-card, #1e293b)',
+            border: '1px solid var(--border-color, rgba(255,255,255,0.15))',
+            borderRadius: '8px',
+            maxHeight: '220px',
+            overflowY: 'auto',
+            boxShadow: '0 16px 40px rgba(0,0,0,0.65)'
+          }}
+        >
+          {filtered.length === 0 && allowCustom && query && (
+            <div
+              onMouseDown={() => handleSelect(query)}
+              style={{
+                padding: '8px 10px', fontSize: '12px', color: 'var(--cyan, #38bdf8)',
+                cursor: 'pointer', fontStyle: 'italic', borderBottom: '1px solid var(--border-color, rgba(255,255,255,0.08))'
+              }}
+            >
+              ✚ Use "{query}"
+            </div>
+          )}
+          {filtered.length === 0 && (!allowCustom || !query) && (
+            <div style={{ padding: '8px 10px', fontSize: '12px', color: 'var(--text-muted, #94a3b8)' }}>
+              No matches found
+            </div>
+          )}
+          {filtered.map(opt => (
+            <div
+              key={opt.value}
+              onMouseDown={() => handleSelect(String(opt.value))}
+              style={{
+                padding: '7px 10px', cursor: 'pointer', fontSize: '12px',
+                color: String(opt.value) === String(value) ? 'var(--cyan, #38bdf8)' : 'var(--text-main, #f8fafc)',
+                background: String(opt.value) === String(value) ? 'rgba(56,189,248,0.12)' : 'transparent',
+                borderBottom: '1px solid var(--border-color, rgba(255,255,255,0.06))'
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
+              onMouseLeave={e => e.currentTarget.style.background = String(opt.value) === String(value) ? 'rgba(56,189,248,0.12)' : 'transparent'}
+            >
+              {opt.label}
+            </div>
+          ))}
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+}
 
 export default function PurchaseEntryModal({ isOpen, onClose, onSuccess, managerProfile, initialPurchase = null }) {
   const [suppliers, setSuppliers] = useState([]);
@@ -19,6 +184,9 @@ export default function PurchaseEntryModal({ isOpen, onClose, onSuccess, manager
   const [otherCharges, setOtherCharges] = useState('');
   const [roundOff, setRoundOff] = useState('');
   const [remarks, setRemarks] = useState('');
+
+  // EL / Extra Charges (Freight, Loading, etc.)
+  const [elCharges, setElCharges] = useState([]);
 
   // Multi-Item Lines
   // item: { id, rawMaterialId, quantity, unit, rate, discount, hsnCode, gstPercent }
@@ -54,6 +222,15 @@ export default function PurchaseEntryModal({ isOpen, onClose, onSuccess, manager
         setOtherCharges(String(initialPurchase.other_charges || ''));
         setRoundOff(String(initialPurchase.round_off || ''));
         setRemarks(initialPurchase.remarks || '');
+        let parsedEl = [];
+        try {
+          parsedEl = typeof initialPurchase.el_charges === 'string'
+            ? JSON.parse(initialPurchase.el_charges)
+            : (Array.isArray(initialPurchase.el_charges) ? initialPurchase.el_charges : []);
+        } catch (e) {
+          parsedEl = [];
+        }
+        setElCharges(parsedEl);
 
         if (initialPurchase.items && initialPurchase.items.length > 0) {
           setItems(initialPurchase.items.map((it, idx) => ({
@@ -89,6 +266,7 @@ export default function PurchaseEntryModal({ isOpen, onClose, onSuccess, manager
         setOtherCharges('');
         setRoundOff('');
         setRemarks('');
+        setElCharges([]);
 
         if (activeRMs.length > 0) {
           const first = activeRMs[0];
@@ -202,8 +380,16 @@ export default function PurchaseEntryModal({ isOpen, onClose, onSuccess, manager
   const billDiscount = parseFloat(discountAmount) || 0;
   const billOther = parseFloat(otherCharges) || 0;
   const billRound = parseFloat(roundOff) || 0;
+  const totalElCharges = elCharges.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
 
-  const grandTotal = Math.max(0, totalTaxable + totalGst + billOther - billDiscount + billRound);
+  const grandTotal = Math.max(0, totalTaxable + totalGst + billOther + totalElCharges - billDiscount + billRound);
+
+  // EL Charges helpers
+  const handleAddElCharge = () => {
+    setElCharges([...elCharges, { id: Date.now(), label: 'Freight Charges', amount: '' }]);
+  };
+  const handleRemoveElCharge = (id) => setElCharges(elCharges.filter(c => c.id !== id));
+  const handleElChargeChange = (id, field, val) => setElCharges(elCharges.map(c => c.id === id ? { ...c, [field]: val } : c));
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -240,6 +426,7 @@ export default function PurchaseEntryModal({ isOpen, onClose, onSuccess, manager
         discountAmount: billDiscount,
         otherCharges: billOther,
         roundOff: billRound,
+        elCharges: elCharges.filter(c => c.label && parseFloat(c.amount) > 0),
         remarks,
         managerName: managerProfile?.name || 'Admin',
         managerId: managerProfile?.id || null,
@@ -318,12 +505,19 @@ export default function PurchaseEntryModal({ isOpen, onClose, onSuccess, manager
 
                   <div>
                     <label className="form-label">Supplier *</label>
-                    <select className="form-select" value={supplierId} onChange={e => setSupplierId(e.target.value)} required>
-                      <option value="">Select Supplier...</option>
-                      {suppliers.map(s => (
-                        <option key={s.id} value={s.id}>{s.name} ({s.gst_number || 'URP'})</option>
-                      ))}
-                    </select>
+                    <SearchableSelect
+                      value={supplierId}
+                      onChange={v => setSupplierId(v)}
+                      options={[
+                        { value: '', label: 'Select Supplier...' },
+                        ...suppliers.map(s => ({
+                          value: String(s.id),
+                          label: `${s.name} (${s.gst_number || 'URP'})`
+                        }))
+                      ]}
+                      placeholder="Search supplier..."
+                      required
+                    />
                   </div>
 
                   <div>
@@ -382,27 +576,23 @@ export default function PurchaseEntryModal({ isOpen, onClose, onSuccess, manager
                           const rm = rawMaterials.find(r => String(r.id) === String(it.rawMaterialId));
                           return (
                             <tr key={it.id}>
-                              <td>
-                                <select
-                                  className="form-select"
-                                  style={{ padding: '6px 8px', fontSize: '12px' }}
+                               <td>
+                                <SearchableSelect
                                   value={it.rawMaterialId}
-                                  onChange={e => handleItemChange(it.id, 'rawMaterialId', e.target.value)}
+                                  onChange={v => handleItemChange(it.id, 'rawMaterialId', v)}
+                                  options={[
+                                    { value: '', label: 'Select Item...' },
+                                    ...rawMaterials.map(r => ({ value: String(r.id), label: `${r.name} [${r.unit}]` }))
+                                  ]}
+                                  placeholder="Search raw material..."
                                   required
-                                >
-                                  <option value="">Select Item...</option>
-                                  {rawMaterials.map(r => (
-                                    <option key={r.id} value={r.id}>
-                                      {r.name} [{r.unit}]
-                                    </option>
-                                  ))}
-                                </select>
+                                />
                                 {rm?.hsn_code && (
                                   <div style={{ fontSize: '10px', color: 'var(--text-dim)', marginTop: '2px' }}>
                                     HSN: {rm.hsn_code} | Cat: {rm.category}
                                   </div>
                                 )}
-                              </td>
+                               </td>
 
                               <td>
                                 <input
@@ -494,6 +684,72 @@ export default function PurchaseEntryModal({ isOpen, onClose, onSuccess, manager
                       value={remarks}
                       onChange={e => setRemarks(e.target.value)}
                     />
+
+                    {/* EL / Extra Charges Section */}
+                    <div style={{ marginTop: '14px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                        <label className="form-label" style={{ margin: 0, color: 'var(--amber)', fontWeight: '700' }}>
+                          ⚡ EL / Extra Charges
+                        </label>
+                        <button
+                          type="button"
+                          onClick={handleAddElCharge}
+                          style={{
+                            display: 'inline-flex', alignItems: 'center', gap: '4px',
+                            background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.3)',
+                            borderRadius: '6px', padding: '3px 8px', color: 'var(--amber)',
+                            fontSize: '11px', fontWeight: '600', cursor: 'pointer'
+                          }}
+                        >
+                          <Plus size={11} /> Add Charge
+                        </button>
+                      </div>
+
+                      {elCharges.length === 0 && (
+                        <div style={{ fontSize: '11.5px', color: 'var(--text-muted)', fontStyle: 'italic', padding: '6px 0' }}>
+                          No extra charges added. Click "Add Charge" for Freight, Loading, etc.
+                        </div>
+                      )}
+
+                      {elCharges.map((c, idx) => (
+                        <div key={c.id} style={{ display: 'flex', gap: '6px', marginBottom: '6px', alignItems: 'center' }}>
+                          <SearchableSelect
+                            value={c.label}
+                            onChange={v => handleElChargeChange(c.id, 'label', v)}
+                            options={[
+                              { value: 'Freight Charges', label: 'Freight Charges' },
+                              { value: 'Loading Charges', label: 'Loading Charges' },
+                              { value: 'Unloading Charges', label: 'Unloading Charges' },
+                              { value: 'Transport Charges', label: 'Transport Charges' },
+                              { value: 'Packing Charges', label: 'Packing Charges' },
+                              { value: 'Handling Charges', label: 'Handling Charges' },
+                              { value: 'Insurance Charges', label: 'Insurance Charges' },
+                              { value: 'Other Charges', label: 'Other Charges' },
+                            ]}
+                            placeholder="Charge name (e.g. Freight)..."
+                            allowCustom={true}
+                            style={{ flex: 2 }}
+                          />
+                          <input
+                            type="number"
+                            className="form-input"
+                            style={{ flex: 1, padding: '6px 8px', fontSize: '12px' }}
+                            placeholder="Amount"
+                            step="0.01"
+                            min="0"
+                            value={c.amount}
+                            onChange={e => handleElChargeChange(c.id, 'amount', e.target.value)}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveElCharge(c.id)}
+                            style={{ background: 'none', border: 'none', color: 'var(--rose)', cursor: 'pointer', padding: '4px', flexShrink: 0 }}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   </div>
 
                   <div style={{ fontSize: '12.5px', lineHeight: '1.8' }}>
@@ -523,6 +779,28 @@ export default function PurchaseEntryModal({ isOpen, onClose, onSuccess, manager
                         )}
                       </>
                     )}
+
+                    {/* EL Charges Subtotal */}
+                    {elCharges.filter(c => parseFloat(c.amount) > 0).map(c => (
+                      <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--amber)' }}>
+                        <span>+ {c.label}:</span>
+                        <span className="num-mono">₹{parseFloat(c.amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </div>
+                    ))}
+
+                    {/* Round Off */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: 'var(--text-muted)', gap: '8px', marginTop: '4px' }}>
+                      <span style={{ whiteSpace: 'nowrap' }}>Round Off (±):</span>
+                      <input
+                        type="number"
+                        className="form-input"
+                        style={{ width: '100px', padding: '3px 8px', fontSize: '12px', textAlign: 'right' }}
+                        placeholder="e.g. -0.50"
+                        step="0.01"
+                        value={roundOff}
+                        onChange={e => setRoundOff(e.target.value)}
+                      />
+                    </div>
 
                     <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '2px solid var(--border-color)', marginTop: '8px', paddingTop: '8px', fontSize: '15px', fontWeight: '800' }}>
                       <span style={{ color: 'var(--text-main)' }}>Grand Total:</span>

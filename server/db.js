@@ -447,6 +447,33 @@ function initSchema() {
       remarks TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS staff (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      phone TEXT,
+      designation TEXT DEFAULT 'Worker',
+      wage_type TEXT DEFAULT 'Daily',
+      wage_amount REAL DEFAULT 0,
+      joining_date TEXT,
+      status TEXT DEFAULT 'active',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS staff_attendance (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      staff_id INTEGER NOT NULL,
+      date TEXT NOT NULL,
+      status TEXT NOT NULL,
+      overtime_hours REAL DEFAULT 0,
+      remarks TEXT,
+      marked_by TEXT NOT NULL DEFAULT 'Manager',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(staff_id, date),
+      FOREIGN KEY (staff_id) REFERENCES staff(id) ON DELETE CASCADE
+    );
   `);
 
   // ─── Runtime migration: relax NOT NULL on production_batches ────────────────
@@ -858,6 +885,7 @@ try {
     `ALTER TABLE raw_material_purchases ADD COLUMN discount_amount REAL DEFAULT 0;`,
     `ALTER TABLE raw_material_purchases ADD COLUMN other_charges REAL DEFAULT 0;`,
     `ALTER TABLE raw_material_purchases ADD COLUMN round_off REAL DEFAULT 0;`,
+    `ALTER TABLE raw_material_purchases ADD COLUMN el_charges TEXT DEFAULT '[]';`,
     `ALTER TABLE raw_material_purchases ADD COLUMN payment_mode TEXT DEFAULT 'Credit';`,
     `ALTER TABLE raw_material_purchases ADD COLUMN is_voided INTEGER DEFAULT 0;`,
     `ALTER TABLE raw_material_purchases ADD COLUMN voided_at DATETIME;`,
@@ -907,6 +935,37 @@ try {
     } catch {
       // Column already added, safe to ignore
     }
+  }
+
+  // Staff & Attendance tables (safe create)
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS staff (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        designation TEXT,
+        department TEXT,
+        phone TEXT,
+        status TEXT DEFAULT 'active',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS staff_attendance (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        staff_id INTEGER NOT NULL,
+        date TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'present',
+        remarks TEXT,
+        marked_by TEXT DEFAULT 'Admin',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (staff_id) REFERENCES staff(id),
+        UNIQUE(staff_id, date)
+      );
+    `);
+  } catch (e) {
+    console.warn('Staff tables already exist or error:', e.message);
   }
 
   // Seed default company profile settings

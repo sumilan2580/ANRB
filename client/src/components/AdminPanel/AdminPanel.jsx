@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   LayoutDashboard, Package, Layers, Users, UserCheck, Cpu, Clock,
   ShoppingBag, Factory, Truck, Warehouse, BookOpen, Scale, FileBarChart,
-  Activity, Settings, ChevronRight, ChevronDown, CreditCard, Calendar
+  Activity, Settings, ChevronRight, ChevronDown, CreditCard, Calendar, CalendarDays
 } from 'lucide-react';
 import AdminDashboard from './AdminDashboard';
 import MastersPage from './MastersPage';
@@ -12,6 +12,7 @@ import StockReconciliation from './StockReconciliation';
 import ReportsPage from './ReportsPage';
 import ManagerActivityReport from './ManagerActivityReport';
 import AccountsPage from './AccountsPage';
+import AttendanceView from '../AttendanceView';
 import { api } from '../../api';
 
 const NAV_ITEMS = [
@@ -29,6 +30,8 @@ const NAV_ITEMS = [
   { id: 'reconciliation', label: 'Stock Reconciliation', icon: <Scale size={16} /> },
 
   { section: 'Accounts', id: 'accounts', label: 'Ledger & Payments', icon: <CreditCard size={16} /> },
+
+  { section: 'HR & Staff', id: 'attendance', label: 'Staff Attendance', icon: <CalendarDays size={16} /> },
 
   { section: 'Reports', id: 'reports', label: 'Production & Sales', icon: <FileBarChart size={16} /> },
   { id: 'manager-activity', label: 'Manager Activity', icon: <Activity size={16} /> },
@@ -81,6 +84,7 @@ export default function AdminPanel() {
       case 'stock-ledger': return <StockLedger />;
       case 'reconciliation': return <StockReconciliation />;
       case 'accounts': return <AccountsPage activeFinancialYear={activeFy} onRefreshFy={loadFinancialYears} />;
+      case 'attendance': return <AttendanceView mode="admin" markerName="Admin" />;
       case 'reports': return <ReportsPage />;
       case 'manager-activity': return <ManagerActivityReport />;
       default: return <AdminDashboard />;

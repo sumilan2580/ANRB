@@ -118,6 +118,30 @@ export const api = {
   getManagerActivity: (managerName = '') => request(`/managers/activity${managerName ? `?managerName=${encodeURIComponent(managerName)}` : ''}`),
   getMyEntries: (managerName) => request(`/managers/my-entries?managerName=${encodeURIComponent(managerName)}`),
 
+  // Staff Master
+  getStaff: (status = '') => request(`/masters/staff${status ? `?status=${encodeURIComponent(status)}` : ''}`),
+  createStaff: (data) => request('/masters/staff', { method: 'POST', body: JSON.stringify(data) }),
+  updateStaff: (id, data) => request(`/masters/staff/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteStaff: (id) => request(`/masters/staff/${id}`, { method: 'DELETE' }),
+
+  // Staff Attendance
+  getAttendance: (params = '') => {
+    if (typeof params === 'string') {
+      return request(`/attendance${params ? (params.startsWith('?') ? params : `?${params}`) : ''}`);
+    }
+    const qs = new URLSearchParams();
+    if (params?.date) qs.set('date', params.date);
+    if (params?.month) qs.set('month', params.month);
+    if (params?.dateFrom) qs.set('dateFrom', params.dateFrom);
+    if (params?.dateTo) qs.set('dateTo', params.dateTo);
+    if (params?.staffId) qs.set('staffId', params.staffId);
+    const query = qs.toString();
+    return request(`/attendance${query ? `?${query}` : ''}`);
+  },
+  saveAttendanceBulk: (data) => request('/attendance/bulk', { method: 'POST', body: JSON.stringify(data) }),
+  saveBulkAttendance: (data) => request('/attendance/bulk', { method: 'POST', body: JSON.stringify(data) }),
+  getAttendanceSummary: (month = '') => request(`/attendance/summary${month ? `?month=${encodeURIComponent(month)}` : ''}`),
+
   // Transactions
   getPurchases: (params = '') => request(`/transactions/purchases${params ? `?${params}` : ''}`),
   getPurchase: (id) => request(`/transactions/purchases/${id}`),
@@ -240,4 +264,6 @@ export const api = {
   createDebitCreditNote: (data) => request('/accounts/debit-credit-notes', { method: 'POST', body: JSON.stringify(data) }),
   updateDebitCreditNote: (id, data) => request(`/accounts/debit-credit-notes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteDebitCreditNote: (id) => request(`/accounts/debit-credit-notes/${id}`, { method: 'DELETE' }),
+
 };
+
