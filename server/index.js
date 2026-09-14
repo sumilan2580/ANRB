@@ -607,10 +607,11 @@ app.get('/api/dashboard/stats', requireAdmin, async (req, res) => {
 app.get('/api/masters/raw-materials', async (req, res) => {
   if (req.role === 'manager') {
     const rows = await db.prepare(`
-      SELECT id, code, name, category, unit, hsn_code, gst_percent, status
-      FROM raw_materials
-      WHERE status = 'active'
-      ORDER BY name ASC
+      SELECT rm.*,
+             COALESCE((SELECT SUM(quantity_change) FROM raw_material_movements WHERE raw_material_id = rm.id), 0) AS current_stock_kg
+      FROM raw_materials rm
+      WHERE rm.status = 'active'
+      ORDER BY rm.name ASC
     `).all();
     return res.json(rows);
   }
@@ -695,10 +696,11 @@ app.delete('/api/masters/raw-materials/:id', requireAdmin, async (req, res) => {
 app.get('/api/masters/finished-goods', async (req, res) => {
   if (req.role === 'manager') {
     const rows = await db.prepare(`
-      SELECT id, product_code, product_name, gsm, width_size, length_val, colour, grade, unit, hsn_code, gst_percent, status
-      FROM finished_products
-      WHERE status = 'active'
-      ORDER BY product_code ASC
+      SELECT fg.*,
+             COALESCE((SELECT SUM(quantity_change) FROM finished_goods_movements WHERE finished_product_id = fg.id), 0) AS current_stock_kg
+      FROM finished_products fg
+      WHERE fg.status = 'active'
+      ORDER BY fg.product_code ASC
     `).all();
     return res.json(rows);
   }
@@ -3095,7 +3097,7 @@ app.delete('/api/transactions/sales/:id', requireAdmin, async (req, res) => {
 // -------------------------------------------------------------
 
 // Live Raw Material Stock
-app.get('/api/inventory/raw-materials', requireAdmin, async (req, res) => {
+app.get('/api/inventory/raw-materials', async (req, res) => {
   const rows = await db.prepare(`
     SELECT rm.id, rm.code, rm.name, rm.category, rm.unit, rm.min_stock_alert, rm.status,
            COALESCE(SUM(m.quantity_change), 0) AS current_stock_kg,
@@ -3111,7 +3113,7 @@ app.get('/api/inventory/raw-materials', requireAdmin, async (req, res) => {
 });
 
 // Live Finished Goods Stock
-app.get('/api/inventory/finished-goods', requireAdmin, async (req, res) => {
+app.get('/api/inventory/finished-goods', async (req, res) => {
   const rows = await db.prepare(`
     SELECT fp.id, fp.product_code, fp.product_name, fp.gsm, fp.width_size, fp.length_val, fp.colour, fp.grade, fp.unit, fp.min_stock_alert, fp.status,
            COALESCE(SUM(m.quantity_change), 0) AS current_stock_kg,
