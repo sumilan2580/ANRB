@@ -544,7 +544,7 @@ function LedgerView({ type, parties, customers, suppliers, onAddPayment }) {
         <td>${t.description}</td>
         <td style="text-align:right;color:${t.debit > 0 ? '#c62828' : '#666'}">${t.debit > 0 ? '₹' + t.debit.toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '—'}</td>
         <td style="text-align:right;color:${t.credit > 0 ? '#2e7d32' : '#666'}">${t.credit > 0 ? '₹' + t.credit.toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '—'}</td>
-        <td style="text-align:right;font-weight:700;color:${t.balance >= 0 ? '#c62828' : '#2e7d32'}">₹${Math.abs(t.balance).toLocaleString('en-IN', { minimumFractionDigits: 2 })} ${t.balance >= 0 ? 'Dr' : 'Cr'}</td>
+        <td style="text-align:right;font-weight:700;color:${t.balance >= 0 ? '#c62828' : '#2e7d32'}">₹${Math.abs(t.balance).toLocaleString('en-IN', { minimumFractionDigits: 2 })} ${t.balance > 0 ? (type === 'CUSTOMER' ? 'Dr' : 'Cr') : t.balance < 0 ? (type === 'CUSTOMER' ? 'Cr' : 'Dr') : ''}</td>
       </tr>
     `).join('');
 
@@ -563,7 +563,7 @@ function LedgerView({ type, parties, customers, suppliers, onAddPayment }) {
         <div class="sum-box"><div style="font-size:10px;color:#666;text-transform:uppercase">Opening Balance</div><div style="font-size:16px;font-weight:700">₹${ledger.openingBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div></div>
         <div class="sum-box"><div style="font-size:10px;color:#666;text-transform:uppercase">Total Debit</div><div style="font-size:16px;font-weight:700;color:#c62828">₹${ledger.totalDebit.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div></div>
         <div class="sum-box"><div style="font-size:10px;color:#666;text-transform:uppercase">Total Credit</div><div style="font-size:16px;font-weight:700;color:#2e7d32">₹${ledger.totalCredit.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div></div>
-        <div class="sum-box"><div style="font-size:10px;color:#666;text-transform:uppercase">Closing Balance</div><div style="font-size:16px;font-weight:700;color:${ledger.closingBalance >= 0 ? '#c62828' : '#2e7d32'}">₹${Math.abs(ledger.closingBalance).toLocaleString('en-IN', { minimumFractionDigits: 2 })} ${ledger.closingBalance >= 0 ? '(Receivable)' : '(Overpaid)'}</div></div>
+        <div class="sum-box"><div style="font-size:10px;color:#666;text-transform:uppercase">Closing Balance</div><div style="font-size:16px;font-weight:700;color:${ledger.closingBalance >= 0 ? '#c62828' : '#2e7d32'}">₹${Math.abs(ledger.closingBalance).toLocaleString('en-IN', { minimumFractionDigits: 2 })} ${ledger.closingBalance > 0 ? (type === 'CUSTOMER' ? '(Receivable)' : '(Payable)') : ledger.closingBalance < 0 ? (type === 'CUSTOMER' ? '(Advance/Overpaid)' : '(Advance Paid)') : '(Clear)'}</div></div>
       </div>
       <table><thead><tr><th>Date</th><th>Doc #</th><th>Type</th><th>Description</th><th style="text-align:right">Debit</th><th style="text-align:right">Credit</th><th style="text-align:right">Balance</th></tr></thead>
       <tbody>${rows}</tbody></table>
@@ -633,7 +633,7 @@ function LedgerView({ type, parties, customers, suppliers, onAddPayment }) {
           <div className="table-container">
             {ledger.openingBalance !== 0 && (
               <div style={{ padding: '8px 14px', background: 'rgba(255,255,255,0.04)', borderBottom: '1px solid var(--border-color)', fontSize: '12px', color: 'var(--amber)', fontWeight: '600' }}>
-                Opening Balance: {fmtINR(ledger.openingBalance)} {ledger.openingBalance > 0 ? '(Dr)' : '(Cr)'}
+                Opening Balance: {fmtINR(Math.abs(ledger.openingBalance))} {ledger.openingBalance > 0 ? (type === 'CUSTOMER' ? '(Dr)' : '(Cr)') : (type === 'CUSTOMER' ? '(Cr)' : '(Dr)')}
               </div>
             )}
             <table className="custom-table">
@@ -669,7 +669,7 @@ function LedgerView({ type, parties, customers, suppliers, onAddPayment }) {
                       {t.credit > 0 ? fmtINR(t.credit) : '—'}
                     </td>
                     <td className="num-mono" style={{ textAlign: 'right', fontWeight: '700', color: t.balance > 0 ? 'var(--rose)' : t.balance < 0 ? 'var(--emerald)' : 'var(--text-dim)' }}>
-                      {fmtINR(Math.abs(t.balance))} {t.balance > 0 ? 'Dr' : t.balance < 0 ? 'Cr' : ''}
+                      {fmtINR(Math.abs(t.balance))} {t.balance > 0 ? (type === 'CUSTOMER' ? 'Dr' : 'Cr') : t.balance < 0 ? (type === 'CUSTOMER' ? 'Cr' : 'Dr') : ''}
                     </td>
                     {type === 'CUSTOMER' && (
                       <td>
@@ -697,7 +697,7 @@ function LedgerView({ type, parties, customers, suppliers, onAddPayment }) {
               <div style={{ padding: '10px 14px', background: 'var(--bg-card)', borderTop: '2px solid var(--border-color)', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '24px', fontWeight: '700', fontSize: '13px' }}>
                 <span style={{ color: 'var(--text-muted)', fontWeight: '400' }}>Closing Balance:</span>
                 <span style={{ color: ledger.closingBalance > 0 ? 'var(--rose)' : 'var(--emerald)', fontSize: '15px' }}>
-                  {fmtINR(Math.abs(ledger.closingBalance))} {ledger.closingBalance > 0 ? 'Dr (Receivable)' : 'Cr (Advance)'}
+                  {fmtINR(Math.abs(ledger.closingBalance))} {ledger.closingBalance > 0 ? (type === 'CUSTOMER' ? 'Dr (Receivable)' : 'Cr (Payable)') : ledger.closingBalance < 0 ? (type === 'CUSTOMER' ? 'Cr (Advance)' : 'Dr (Advance)') : 'Clear'}
                 </span>
               </div>
             )}

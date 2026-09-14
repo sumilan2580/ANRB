@@ -758,7 +758,7 @@ function LedgerView({ onViewInvoice }) {
           <div class="summary-card">
             <div class="summary-label">Closing Balance</div>
             <div class="summary-val" style="color:${ledger.closingBalance >= 0 ? '#dc2626' : '#16a34a'};">
-              ₹${Math.abs(ledger.closingBalance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })} ${ledger.closingBalance >= 0 ? 'Dr (Receivable)' : 'Cr (Payable/Advance)'}
+              ₹${Math.abs(ledger.closingBalance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })} ${type === 'CUSTOMER' ? (ledger.closingBalance >= 0 ? 'Dr (Receivable)' : 'Cr (Advance)') : (ledger.closingBalance >= 0 ? 'Cr (Payable)' : 'Dr (Advance)')}
             </div>
           </div>
         </div>
@@ -791,9 +791,9 @@ function LedgerView({ onViewInvoice }) {
     const party = ledger.customer || ledger.supplier || {};
     const phone = (party.phone || '').replace(/[^0-9]/g, '');
     const bal = Math.abs(ledger.closingBalance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 });
-    const balStatus = ledger.closingBalance >= 0
-      ? (type === 'CUSTOMER' ? 'Receivable (Pending)' : 'Payable')
-      : (type === 'CUSTOMER' ? 'Advance/Overpaid' : 'Receivable/Advance');
+    const balStatus = type === 'CUSTOMER'
+      ? (ledger.closingBalance > 0 ? 'Receivable (Pending)' : ledger.closingBalance < 0 ? 'Advance/Overpaid' : 'Clear')
+      : (ledger.closingBalance > 0 ? 'Payable (Pending)' : ledger.closingBalance < 0 ? 'Advance Paid' : 'Clear');
 
     let msg = `*ACCOUNT STATEMENT / LEDGER*\n`;
     msg += `*Company:* ANRB Manufacturing\n`;
@@ -984,7 +984,7 @@ function LedgerView({ onViewInvoice }) {
             <div style={{ background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '10px', padding: '12px 16px' }}>
               <div style={{ fontSize: '10.5px', color: '#64748b', textTransform: 'uppercase', fontWeight: '600' }}>Closing Balance</div>
               <div style={{ fontSize: '18px', fontWeight: '800', color: ledger.closingBalance >= 0 ? '#fb7185' : '#34d399', marginTop: '3px' }}>
-                {fmtINR(Math.abs(ledger.closingBalance))} {ledger.closingBalance >= 0 ? 'Dr' : 'Cr'}
+                {fmtINR(Math.abs(ledger.closingBalance))} {type === 'CUSTOMER' ? (ledger.closingBalance > 0 ? 'Dr' : ledger.closingBalance < 0 ? 'Cr' : '') : (ledger.closingBalance > 0 ? 'Cr' : ledger.closingBalance < 0 ? 'Dr' : '')}
               </div>
             </div>
           </div>
@@ -1042,7 +1042,7 @@ function LedgerView({ onViewInvoice }) {
                         {t.credit > 0 ? fmtINR(t.credit) : '—'}
                       </td>
                       <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '700', fontFamily: 'monospace', color: t.balance >= 0 ? '#fb7185' : '#34d399' }}>
-                        {fmtINR(Math.abs(t.balance))} {t.balance >= 0 ? 'Dr' : 'Cr'}
+                        {fmtINR(Math.abs(t.balance))} {type === 'CUSTOMER' ? (t.balance > 0 ? 'Dr' : t.balance < 0 ? 'Cr' : '') : (t.balance > 0 ? 'Cr' : t.balance < 0 ? 'Dr' : '')}
                       </td>
                       {type === 'CUSTOMER' && (
                         <td style={{ padding: '10px 14px', textAlign: 'center' }}>
