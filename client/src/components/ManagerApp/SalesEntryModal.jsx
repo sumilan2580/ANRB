@@ -77,8 +77,12 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
     if (fg) setGstPercent(String(fg.gst_percent || 18));
   };
 
+  // Admin panel: no stock restrictions. Manager: stock rules enforced.
+  const isAdmin = managerProfile?.name === 'Admin' || managerProfile?.deviceId === 'admin-portal';
+
   const selectedFG = finishedGoods.find(f => String(f.id) === String(finishedProductId));
-  const currentFGStock = selectedFG ? (selectedFG.current_stock_kg || 0) : 0;
+  const currentFGStock = selectedFG ? Number(selectedFG.current_stock_kg || 0) : 0;
+  const minStockAlert = selectedFG ? Number(selectedFG.min_stock_alert || 0) : 0;
   const initialQty = initialSale ? Number(initialSale.quantity_kg || initialSale.items?.[0]?.quantity || 0) : 0;
   const availableStock = currentFGStock + initialQty;
   const numQty = parseFloat(quantityKg) || 0;
@@ -87,7 +91,13 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
   const taxableAmount = numQty * numRate;
   const gstAmount = (taxableAmount * numGst) / 100;
   const totalAmount = taxableAmount + gstAmount;
+
+  // Stock status flags
+  const isNoStock = selectedFG && availableStock <= 0;
+  const isLowStock = selectedFG && !isNoStock && minStockAlert > 0 && availableStock <= minStockAlert;
   const isInsufficientStock = numQty > 0 && numQty > availableStock;
+  // Only managers are blocked; admin can always proceed
+  const isBlockedByStock = !isAdmin && (isNoStock || isInsufficientStock);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -97,7 +107,12 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
       return;
     }
 
-    if (isInsufficientStock) {
+    if (!isAdmin && isNoStock) {
+      setError('No stock available for this product. Cannot proceed with sale.');
+      return;
+    }
+
+    if (!isAdmin && isInsufficientStock) {
       setError(`Insufficient stock! Available: ${availableStock.toLocaleString()} KG, Required: ${numQty.toLocaleString()} KG.`);
       return;
     }
@@ -202,18 +217,47 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
 
                 <div className="form-group">
                   <label className="form-label">Finished Good Specification *</label>
-                  <select className="form-select" value={finishedProductId} onChange={e => handleFGChange(e.target.value)} required>
+                  <select
+                    className="form-select"
+                    value={finishedProductId}
+                    onChange={e => handleFGChange(e.target.value)}
+                    required
+                    style={!isAdmin && isNoStock ? { borderColor: 'var(--rose)' } : {}}
+                  >
                     {finishedGoods.length === 0 && <option value="">No active finished goods</option>}
-                    {finishedGoods.map(fg => (
-                      <option key={fg.id} value={fg.id}>
-                        {fg.product_code}: {fg.product_name} — {fg.gsm} GSM, {fg.width_size}, {fg.colour} ({fg.grade}) | Stock: {(fg.current_stock_kg || 0).toLocaleString()} KG
-                      </option>
-                    ))}
+                    {finishedGoods.map(fg => {
+                      const fgStock = Number(fg.current_stock_kg || 0);
+                      const outOfStock = fgStock <= 0;
+                      const fgLow = !outOfStock && fg.min_stock_alert > 0 && fgStock <= fg.min_stock_alert;
+                      const stockLabel = outOfStock
+                        ? ' — ⛔ No Stock'
+                        : fgLow
+                          ? ` | ⚠️ Low: ${fgStock.toLocaleString()} KG`
+                          : ` | Stock: ${fgStock.toLocaleString()} KG`;
+                      return (
+                        <option key={fg.id} value={fg.id} disabled={!isAdmin && outOfStock}>
+                          {fg.product_code}: {fg.product_name} — {fg.gsm} GSM, {fg.width_size}, {fg.colour} ({fg.grade}){stockLabel}
+                        </option>
+                      );
+                    })}
                   </select>
                   {selectedFG && (
-                    <div style={{ marginTop: '4px', fontSize: '11.5px', color: isInsufficientStock ? 'var(--rose)' : 'var(--emerald)' }}>
-                      Available Stock: <strong>{availableStock.toLocaleString()} KG</strong>
-                      {isInsufficientStock && ` — Short by ${(numQty - availableStock).toLocaleString()} KG!`}
+                    <div style={{ marginTop: '6px' }}>
+                      {isNoStock ? (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: '700', color: 'var(--rose)', background: 'rgba(244,63,94,0.1)', border: '1px solid rgba(244,63,94,0.3)', borderRadius: '6px', padding: '4px 10px' }}>
+                          <AlertCircle size={12} /> ⛔ No Stock Available
+                          {isAdmin && <span style={{ fontWeight: '400', opacity: 0.7, marginLeft: '4px' }}>(Admin override — sale can proceed)</span>}
+                        </span>
+                      ) : isLowStock ? (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: '700', color: 'var(--amber)', background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: '6px', padding: '4px 10px' }}>
+                          <AlertCircle size={12} /> ⚠️ Low Stock — {availableStock.toLocaleString()} KG (Min Alert: {minStockAlert.toLocaleString()} KG)
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: '12px', fontWeight: '600', color: isInsufficientStock ? 'var(--rose)' : 'var(--emerald)' }}>
+                          ✓ Available Stock: <strong>{availableStock.toLocaleString()} KG</strong>
+                          {isInsufficientStock && ` — Short by ${(numQty - availableStock).toLocaleString()} KG!`}
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>
@@ -225,8 +269,13 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
                       type="number" step="any" className="form-input num-mono"
                       placeholder="e.g. 500" value={quantityKg}
                       onChange={e => setQuantityKg(e.target.value)} required
-                      style={isInsufficientStock ? { borderColor: 'var(--rose)' } : {}}
+                      style={!isAdmin && isInsufficientStock ? { borderColor: 'var(--rose)', background: 'rgba(244,63,94,0.05)' } : {}}
                     />
+                    {!isAdmin && isInsufficientStock && (
+                      <div style={{ marginTop: '4px', fontSize: '11.5px', color: 'var(--rose)', fontWeight: '600' }}>
+                        ⚠️ Quantity exceeds available stock ({availableStock.toLocaleString()} KG)
+                      </div>
+                    )}
                   </div>
                   <div className="form-group">
                     <label className="form-label">Rate per KG (₹) *</label>
@@ -298,7 +347,8 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
             <button
               type="submit"
               className="btn btn-emerald"
-              disabled={submitting || loading || isInsufficientStock || numQty <= 0 || !finishedProductId || !customerId}
+              disabled={submitting || loading || isBlockedByStock || numQty <= 0 || !finishedProductId || !customerId}
+              title={isBlockedByStock ? (isNoStock ? 'Stock nahi hai — sale allowed nahi' : `Stock kam hai — ${availableStock.toLocaleString()} KG available`) : ''}
             >
               <CheckCircle2 size={16} />
               {submitting ? 'Saving...' : initialSale ? 'Save Changes' : 'Save Sales Entry'}
