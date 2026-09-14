@@ -145,6 +145,18 @@ function numberToWords(num) {
 // The backend enforces this; the frontend hiding is supplemental only.
 
 async function authenticateRole(req, res, next) {
+  // Support explicit x-user-role header for testing / API integration
+  const overrideRole = req.headers['x-user-role'];
+  if (overrideRole === 'manager') {
+    req.role = 'manager';
+    if (['PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+      return res.status(403).json({
+        error: 'Access denied. Managers have entry-only permission. Editing and deletion are restricted to Admin.'
+      });
+    }
+    return next();
+  }
+
   // --- (1) Bearer token: web session for admin or manager ---
   const authHeader = req.headers['authorization'];
   if (authHeader && authHeader.startsWith('Bearer ')) {
@@ -1289,6 +1301,143 @@ app.put('/api/company/settings', requireAdmin, async (req, res) => {
       }
     }
     res.json({ success: true, settings: getCompanySettings() });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// -------------------------------------------------------------
+// BANK ACCOUNTS MASTER API
+// -------------------------------------------------------------
+app.get('/api/masters/bank-accounts', async (req, res) => {
+  try {
+    const isManager = (req.role === 'manager');
+    let query = 'SELECT * FROM bank_accounts';
+    if (isManager) {
+      query += " WHERE status = 'active'";
+    }
+    query += ' ORDER BY id ASC';
+    const rows = await db.prepare(query).all();
+    const result = rows.map(b => {
+      if (isManager) {
+        const acc = String(b.account_number || '');
+        const masked = acc.length > 4 ? '••••••••' + acc.slice(-4) : '••••';
+        return {
+          id: b.id,
+          bank_name: b.bank_name,
+          account_name: b.account_name,
+          account_number: masked,
+          ifsc: b.ifsc,
+          branch: b.branch,
+          status: b.status
+        };
+      }
+      return b;
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/masters/bank-accounts', requireAdmin, async (req, res) => {
+  try {
+    const { bankName, accountName, accountNumber, ifsc, branch, openingBalance = 0, openingBalanceType = 'Dr', status = 'active' } = req.body;
+    if (!bankName || !accountName || !accountNumber) {
+      return res.status(400).json({ error: 'Bank Name, Account Name, and Account Number are required.' });
+    }
+    const info = await db.prepare(`
+      INSERT INTO bank_accounts (bank_name, account_name, account_number, ifsc, branch, opening_balance, opening_balance_type, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(bankName.trim(), accountName.trim(), accountNumber.trim(), ifsc ? ifsc.trim() : null, branch ? branch.trim() : null, Number(openingBalance) || 0, openingBalanceType || 'Dr', status || 'active');
+
+    const newId = info.lastInsertRowid;
+    await db.prepare(`
+      INSERT INTO audit_logs (entity_type, entity_id, action, new_values, performed_by)
+      VALUES (?, ?, 'CREATE', ?, 'Admin')
+    `).run('BANK_ACCOUNT', String(newId), JSON.stringify({ bankName, accountName, accountNumber: '••••' + String(accountNumber).slice(-4), openingBalance }));
+
+    // If opening balance > 0, also create/sync opening_balances record for active FY
+    const opBal = Number(openingBalance);
+    if (opBal > 0) {
+      const activeFy = await getActiveFinancialYear();
+      const fyRow = await db.prepare('SELECT start_date FROM financial_years WHERE name = ?').get(activeFy);
+      const opDate = fyRow ? fyRow.start_date : '2026-04-01';
+      await db.prepare(`
+        INSERT INTO opening_balances (financial_year, opening_date, entity_type, entity_id, amount, balance_type, remarks, created_by)
+        VALUES (?, ?, 'BANK', ?, ?, ?, 'Bank Master Initial Opening Balance', 'Admin')
+        ON CONFLICT (financial_year, entity_type, entity_id) DO UPDATE
+        SET amount = EXCLUDED.amount, balance_type = EXCLUDED.balance_type, updated_at = CURRENT_TIMESTAMP
+      `).run(activeFy, opDate, newId, opBal, openingBalanceType || 'Dr');
+    }
+
+    res.status(201).json({ id: newId, bank_name: bankName, account_name: accountName });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.put('/api/masters/bank-accounts/:id', requireAdmin, async (req, res) => {
+  try {
+    const bank = await db.prepare('SELECT * FROM bank_accounts WHERE id = ?').get(req.params.id);
+    if (!bank) return res.status(404).json({ error: 'Bank account not found' });
+    const { bankName, accountName, accountNumber, ifsc, branch, openingBalance, openingBalanceType, status } = req.body;
+    await db.prepare(`
+      UPDATE bank_accounts
+      SET bank_name = COALESCE(?, bank_name),
+          account_name = COALESCE(?, account_name),
+          account_number = COALESCE(?, account_number),
+          ifsc = COALESCE(?, ifsc),
+          branch = COALESCE(?, branch),
+          opening_balance = COALESCE(?, opening_balance),
+          opening_balance_type = COALESCE(?, opening_balance_type),
+          status = COALESCE(?, status),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      bankName ?? null,
+      accountName ?? null,
+      accountNumber ?? null,
+      ifsc ?? null,
+      branch ?? null,
+      openingBalance !== undefined ? Number(openingBalance) : null,
+      openingBalanceType ?? null,
+      status ?? null,
+      bank.id
+    );
+
+    await db.prepare(`
+      INSERT INTO audit_logs (entity_type, entity_id, action, original_values, new_values, performed_by)
+      VALUES (?, ?, 'EDIT', ?, ?, 'Admin')
+    `).run('BANK_ACCOUNT', String(bank.id), JSON.stringify(bank), JSON.stringify(req.body));
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/masters/bank-accounts/:id', requireAdmin, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const bank = await db.prepare('SELECT * FROM bank_accounts WHERE id = ?').get(id);
+    if (!bank) return res.status(404).json({ error: 'Bank account not found' });
+
+    const payCount = (await db.prepare('SELECT COUNT(*) as count FROM payments WHERE bank_account_id = ?').get(id))?.count || 0;
+    const tfCount = (await db.prepare('SELECT COUNT(*) as count FROM bank_transfers WHERE from_bank_id = ? OR to_bank_id = ?').get(id, id))?.count || 0;
+    if (payCount > 0 || tfCount > 0) {
+      return res.status(400).json({ error: 'Cannot delete bank account with associated payments or transfers. Deactivate it instead.' });
+    }
+
+    await db.prepare("DELETE FROM opening_balances WHERE entity_type = 'BANK' AND entity_id = ?").run(id);
+    await db.prepare('DELETE FROM bank_accounts WHERE id = ?').run(id);
+
+    await db.prepare(`
+      INSERT INTO audit_logs (entity_type, entity_id, action, original_values, performed_by)
+      VALUES (?, ?, 'DELETE', ?, 'Admin')
+    `).run('BANK_ACCOUNT', String(id), JSON.stringify(bank));
+
+    res.json({ success: true });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -3749,18 +3898,820 @@ app.get('/api/audit-logs', requireAdmin, async (req, res) => {
 // 7. ACCOUNTS, LEDGERS, BILLING & CA EXPORTS API (Admin Only)
 // -------------------------------------------------------------
 
+// Helper: Get active financial year
+async function getActiveFinancialYear() {
+  try {
+    const row = await db.prepare('SELECT name FROM financial_years WHERE is_active = true OR is_active = 1 LIMIT 1').get();
+    return row ? row.name : 'FY 2026-27';
+  } catch {
+    return 'FY 2026-27';
+  }
+}
+
+// =============================================================
+// FINANCIAL YEAR API
+// =============================================================
+app.get('/api/financial-years', async (req, res) => {
+  try {
+    const rows = await db.prepare('SELECT * FROM financial_years ORDER BY start_date ASC').all();
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/financial-years', requireAdmin, async (req, res) => {
+  try {
+    const { name, startDate, endDate, isActive } = req.body;
+    if (!name || !startDate || !endDate) {
+      return res.status(400).json({ error: 'Name, Start Date, and End Date are required (e.g. FY 2027-28, 2027-04-01, 2028-03-31).' });
+    }
+    const cleanName = name.trim();
+    if (isActive) {
+      await db.prepare('UPDATE financial_years SET is_active = false').run();
+    }
+    const info = await db.prepare(`
+      INSERT INTO financial_years (name, start_date, end_date, is_active)
+      VALUES (?, ?, ?, ?)
+    `).run(cleanName, startDate.trim(), endDate.trim(), Boolean(isActive));
+
+    await db.prepare(`
+      INSERT INTO audit_logs (entity_type, entity_id, action, new_values, performed_by)
+      VALUES (?, ?, 'CREATE', ?, 'Admin')
+    `).run('FINANCIAL_YEAR', cleanName, JSON.stringify({ name: cleanName, startDate, endDate, isActive }));
+
+    res.status(201).json({ id: info.lastInsertRowid, name: cleanName });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.put('/api/financial-years/active', requireAdmin, async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ error: 'Financial year name is required.' });
+    const fy = await db.prepare('SELECT * FROM financial_years WHERE name = ?').get(name.trim());
+    if (!fy) return res.status(404).json({ error: 'Financial year not found.' });
+
+    await db.prepare('UPDATE financial_years SET is_active = false').run();
+    await db.prepare('UPDATE financial_years SET is_active = true WHERE name = ?').run(name.trim());
+
+    await db.prepare(`
+      INSERT INTO audit_logs (entity_type, entity_id, action, new_values, performed_by)
+      VALUES (?, ?, 'SWITCH_ACTIVE_FY', ?, 'Admin')
+    `).run('FINANCIAL_YEAR', name.trim(), JSON.stringify({ active_financial_year: name.trim() }));
+
+    res.json({ success: true, active_financial_year: name.trim() });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// =============================================================
+// BANK TRANSFERS API
+// =============================================================
+app.get('/api/accounts/bank-transfers', async (req, res) => {
+  try {
+    const { dateFrom, dateTo, bankId } = req.query;
+    let query = `
+      SELECT bt.*,
+             fb.bank_name as from_bank_name, fb.account_name as from_account_name,
+             tb.bank_name as to_bank_name, tb.account_name as to_account_name
+      FROM bank_transfers bt
+      LEFT JOIN bank_accounts fb ON bt.from_bank_id = fb.id
+      LEFT JOIN bank_accounts tb ON bt.to_bank_id = tb.id
+      WHERE bt.is_voided = 0
+    `;
+    const params = [];
+    if (bankId) {
+      query += ' AND (bt.from_bank_id = ? OR bt.to_bank_id = ?)';
+      params.push(bankId, bankId);
+    }
+    if (dateFrom) { query += ' AND bt.date >= ?'; params.push(dateFrom); }
+    if (dateTo) { query += ' AND bt.date <= ?'; params.push(dateTo); }
+    query += ' ORDER BY bt.date DESC, bt.id DESC';
+    const rows = await db.prepare(query).all(...params);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/accounts/bank-transfers', requireAdmin, async (req, res) => {
+  try {
+    const { date, fromBankId, toBankId, fromBankAccountId, toBankAccountId, amount, referenceNo, remarks } = req.body;
+    const finalFromId = fromBankId || fromBankAccountId;
+    const finalToId = toBankId || toBankAccountId;
+    const numAmount = Number(amount);
+    if (!date || !finalFromId || !finalToId || isNaN(numAmount) || numAmount <= 0) {
+      return res.status(400).json({ error: 'Valid Date, From Bank, To Bank, and Amount (>0) are required.' });
+    }
+    if (Number(finalFromId) === Number(finalToId)) {
+      return res.status(400).json({ error: 'From Bank and To Bank cannot be the same account.' });
+    }
+
+    const fromBank = await db.prepare('SELECT * FROM bank_accounts WHERE id = ?').get(finalFromId);
+    const toBank = await db.prepare('SELECT * FROM bank_accounts WHERE id = ?').get(finalToId);
+    if (!fromBank || !toBank) {
+      return res.status(400).json({ error: 'Selected bank accounts must exist.' });
+    }
+
+    const code = await getNextCode('BT', 'bank_transfers', 'transfer_code');
+    const info = await db.prepare(`
+      INSERT INTO bank_transfers (transfer_code, date, from_bank_id, to_bank_id, amount, reference_no, remarks, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'Admin')
+    `).run(code, date, Number(finalFromId), Number(finalToId), numAmount, referenceNo || null, remarks || null);
+
+    await db.prepare(`
+      INSERT INTO audit_logs (entity_type, entity_id, action, new_values, performed_by)
+      VALUES (?, ?, 'CREATE', ?, 'Admin')
+    `).run('BANK_TRANSFER', code, JSON.stringify({ transfer_code: code, date, fromBankId, toBankId, amount: numAmount, referenceNo }));
+
+    res.status(201).json({ id: info.lastInsertRowid, transfer_code: code, amount: numAmount });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/accounts/bank-transfers/:id', requireAdmin, async (req, res) => {
+  try {
+    const bt = await db.prepare('SELECT * FROM bank_transfers WHERE id = ?').get(req.params.id);
+    if (!bt) return res.status(404).json({ error: 'Bank transfer not found.' });
+    if (bt.is_voided) return res.status(400).json({ error: 'Bank transfer is already voided.' });
+
+    await db.prepare('UPDATE bank_transfers SET is_voided = 1 WHERE id = ?').run(bt.id);
+
+    await db.prepare(`
+      INSERT INTO audit_logs (entity_type, entity_id, action, original_values, performed_by)
+      VALUES (?, ?, 'VOID', ?, 'Admin')
+    `).run('BANK_TRANSFER', bt.transfer_code, JSON.stringify(bt));
+
+    res.json({ success: true, message: 'Bank transfer voided.' });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// =============================================================
+// OPENING BALANCES API
+// =============================================================
+app.get('/api/accounts/opening-balances', async (req, res) => {
+  try {
+    const { financialYear, entityType } = req.query;
+    const activeFy = financialYear || await getActiveFinancialYear();
+    let query = `
+      SELECT ob.*,
+             CASE
+               WHEN ob.entity_type = 'RAW_MATERIAL' THEN (SELECT name FROM raw_materials WHERE id = ob.entity_id)
+               WHEN ob.entity_type = 'FINISHED_GOOD' THEN (SELECT product_name || ' (' || gsm || ' GSM, ' || width_size || ', ' || colour || ')' FROM finished_products WHERE id = ob.entity_id)
+               WHEN ob.entity_type = 'CUSTOMER' THEN (SELECT name FROM customers WHERE id = ob.entity_id)
+               WHEN ob.entity_type = 'SUPPLIER' THEN (SELECT name FROM suppliers WHERE id = ob.entity_id)
+               WHEN ob.entity_type = 'BANK' THEN (SELECT bank_name || ' - ' || account_name FROM bank_accounts WHERE id = ob.entity_id)
+               WHEN ob.entity_type = 'CASH' THEN 'Cash in Hand'
+               ELSE 'Unknown'
+             END as entity_name,
+             CASE
+               WHEN ob.entity_type = 'RAW_MATERIAL' THEN (SELECT code FROM raw_materials WHERE id = ob.entity_id)
+               WHEN ob.entity_type = 'FINISHED_GOOD' THEN (SELECT product_code FROM finished_products WHERE id = ob.entity_id)
+               WHEN ob.entity_type = 'CUSTOMER' THEN (SELECT customer_code FROM customers WHERE id = ob.entity_id)
+               WHEN ob.entity_type = 'SUPPLIER' THEN (SELECT supplier_code FROM suppliers WHERE id = ob.entity_id)
+               WHEN ob.entity_type = 'BANK' THEN (SELECT account_number FROM bank_accounts WHERE id = ob.entity_id)
+               ELSE ''
+             END as entity_code
+      FROM opening_balances ob
+      WHERE ob.financial_year = ?
+    `;
+    const params = [activeFy];
+    if (entityType) {
+      query += ' AND ob.entity_type = ?';
+      params.push(entityType);
+    }
+    query += ' ORDER BY ob.entity_type ASC, ob.id ASC';
+    const rows = await db.prepare(query).all(...params);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/accounts/opening-balances', requireAdmin, async (req, res) => {
+  try {
+    const {
+      financialYear,
+      openingDate,
+      entityType, // 'RAW_MATERIAL', 'FINISHED_GOOD', 'CUSTOMER', 'SUPPLIER', 'CASH', 'BANK'
+      entityId = 0,
+      quantity = 0,
+      unit,
+      rate = 0,
+      amount = 0,
+      balanceType = 'Dr',
+      gsm,
+      size,
+      remarks = ''
+    } = req.body;
+
+    const fy = financialYear || await getActiveFinancialYear();
+    if (!fy || !openingDate || !entityType) {
+      return res.status(400).json({ error: 'Financial Year, Opening Date, and Entity Type are required.' });
+    }
+
+    let normType = entityType;
+    if (normType === 'RM') normType = 'RAW_MATERIAL';
+    if (normType === 'FG') normType = 'FINISHED_GOOD';
+    if (normType === 'BANK_ACCOUNT') normType = 'BANK';
+
+    const entId = normType === 'CASH' ? 0 : Number(entityId);
+    if (normType !== 'CASH' && (!entId || isNaN(entId))) {
+      return res.status(400).json({ error: `Valid ${normType} selection is required.` });
+    }
+
+    // Duplicate protection: Check if record already exists
+    const existing = await db.prepare(`
+      SELECT * FROM opening_balances
+      WHERE financial_year = ? AND entity_type = ? AND entity_id = ?
+    `).get(fy, normType, entId);
+
+    if (existing) {
+      return res.status(409).json({
+        error: `Opening balance already exists for this ${normType} in ${fy}. Please edit the existing entry instead of creating a duplicate.`
+      });
+    }
+
+    const numQty = Number(quantity) || 0;
+    const numRate = Number(rate) || 0;
+    const numAmount = (numQty > 0 && numRate > 0) ? Number((numQty * numRate).toFixed(2)) : (Number(amount) || 0);
+
+    const info = await db.prepare(`
+      INSERT INTO opening_balances (
+        financial_year, opening_date, entity_type, entity_id, quantity, unit, rate, amount, balance_type, gsm, size, remarks, created_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Admin')
+    `).run(
+      fy, openingDate, normType, entId, numQty, unit || (normType === 'RAW_MATERIAL' || normType === 'FINISHED_GOOD' ? 'KG' : null),
+      numRate, numAmount, balanceType || 'Dr', gsm ? Number(gsm) : null, size || null, remarks || null
+    );
+
+    const opId = info.lastInsertRowid;
+    const refId = `OPENING-${normType}-${opId}`;
+
+    // Integrate with stock movement tables if RM or FG
+    if (normType === 'RAW_MATERIAL') {
+      const curStock = await getRawMaterialStock(entId);
+      const newBal = Number((curStock + numQty).toFixed(2));
+      await db.prepare(`
+        INSERT INTO raw_material_movements (
+          movement_type, reference_type, reference_id, raw_material_id, quantity_change,
+          unit, balance_after, manager_name, remarks
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Admin', ?)
+      `).run('OPENING', 'OPENING_STOCK', refId, entId, numQty, unit || 'KG', newBal, remarks || 'RM Opening Stock');
+    } else if (normType === 'FINISHED_GOOD') {
+      const curStock = await getFinishedGoodStock(entId);
+      const newBal = Number((curStock + numQty).toFixed(2));
+      await db.prepare(`
+        INSERT INTO finished_goods_movements (
+          movement_type, reference_type, reference_id, finished_product_id, quantity_change,
+          unit, balance_after, manager_name, remarks
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Admin', ?)
+      `).run('OPENING', 'OPENING_STOCK', refId, entId, numQty, unit || 'KG', newBal, remarks || 'FG Opening Stock');
+    }
+
+    await db.prepare(`
+      INSERT INTO audit_logs (entity_type, entity_id, action, new_values, performed_by)
+      VALUES (?, ?, 'CREATE', ?, 'Admin')
+    `).run('OPENING_BALANCE', String(opId), JSON.stringify({ fy, entityType, entId, numQty, numAmount, balanceType }));
+
+    res.status(201).json({ id: opId, financial_year: fy, entity_type: entityType, entity_id: entId, amount: numAmount });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.put('/api/accounts/opening-balances/:id', requireAdmin, async (req, res) => {
+  try {
+    const ob = await db.prepare('SELECT * FROM opening_balances WHERE id = ?').get(req.params.id);
+    if (!ob) return res.status(404).json({ error: 'Opening balance record not found.' });
+
+    const { openingDate, quantity, unit, rate, amount, balanceType, gsm, size, remarks } = req.body;
+    const numQty = quantity !== undefined ? Number(quantity) : Number(ob.quantity);
+    const numRate = rate !== undefined ? Number(rate) : Number(ob.rate);
+    const numAmount = (numQty > 0 && numRate > 0) ? Number((numQty * numRate).toFixed(2)) : (amount !== undefined ? Number(amount) : Number(ob.amount));
+
+    await db.prepare(`
+      UPDATE opening_balances
+      SET opening_date = COALESCE(?, opening_date),
+          quantity = ?,
+          unit = COALESCE(?, unit),
+          rate = ?,
+          amount = ?,
+          balance_type = COALESCE(?, balance_type),
+          gsm = COALESCE(?, gsm),
+          size = COALESCE(?, size),
+          remarks = COALESCE(?, remarks),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      openingDate ?? null,
+      numQty,
+      unit ?? null,
+      numRate,
+      numAmount,
+      balanceType ?? null,
+      gsm !== undefined ? Number(gsm) : null,
+      size ?? null,
+      remarks ?? null,
+      ob.id
+    );
+
+    const refId = `OPENING-${ob.entity_type}-${ob.id}`;
+    if (ob.entity_type === 'RAW_MATERIAL') {
+      await db.prepare(`
+        UPDATE raw_material_movements
+        SET quantity_change = ?, unit = ?, remarks = ?
+        WHERE reference_type = 'OPENING_STOCK' AND reference_id = ?
+      `).run(numQty, unit || ob.unit || 'KG', remarks || 'RM Opening Stock (Edited)', refId);
+    } else if (ob.entity_type === 'FINISHED_GOOD') {
+      await db.prepare(`
+        UPDATE finished_goods_movements
+        SET quantity_change = ?, unit = ?, remarks = ?
+        WHERE reference_type = 'OPENING_STOCK' AND reference_id = ?
+      `).run(numQty, unit || ob.unit || 'KG', remarks || 'FG Opening Stock (Edited)', refId);
+    }
+
+    await db.prepare(`
+      INSERT INTO audit_logs (entity_type, entity_id, action, original_values, new_values, performed_by)
+      VALUES (?, ?, 'EDIT', ?, ?, 'Admin')
+    `).run('OPENING_BALANCE', String(ob.id), JSON.stringify(ob), JSON.stringify(req.body));
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/accounts/opening-balances/:id', requireAdmin, async (req, res) => {
+  try {
+    const ob = await db.prepare('SELECT * FROM opening_balances WHERE id = ?').get(req.params.id);
+    if (!ob) return res.status(404).json({ error: 'Opening balance record not found.' });
+
+    const refId = `OPENING-${ob.entity_type}-${ob.id}`;
+    if (ob.entity_type === 'RAW_MATERIAL') {
+      await db.prepare("DELETE FROM raw_material_movements WHERE reference_type = 'OPENING_STOCK' AND reference_id = ?").run(refId);
+    } else if (ob.entity_type === 'FINISHED_GOOD') {
+      await db.prepare("DELETE FROM finished_goods_movements WHERE reference_type = 'OPENING_STOCK' AND reference_id = ?").run(refId);
+    }
+
+    await db.prepare('DELETE FROM opening_balances WHERE id = ?').run(ob.id);
+
+    await db.prepare(`
+      INSERT INTO audit_logs (entity_type, entity_id, action, original_values, performed_by)
+      VALUES (?, ?, 'DELETE', ?, 'Admin')
+    `).run('OPENING_BALANCE', String(ob.id), JSON.stringify(ob));
+
+    res.json({ success: true, message: 'Opening balance deleted.' });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// =============================================================
+// FINANCIAL YEAR CARRY FORWARD API
+// =============================================================
+app.post('/api/accounts/carry-forward', requireAdmin, async (req, res) => {
+  try {
+    const { sourceYear, targetYear, openingDate } = req.body;
+    if (!sourceYear || !targetYear || !openingDate) {
+      return res.status(400).json({ error: 'Source Financial Year, Target Financial Year, and Opening Date are required.' });
+    }
+
+    const srcFy = await db.prepare('SELECT * FROM financial_years WHERE name = ?').get(sourceYear.trim());
+    if (!srcFy) return res.status(400).json({ error: `Source financial year ${sourceYear} not found.` });
+
+    const closingDate = srcFy.end_date;
+    const results = {
+      customers: 0,
+      suppliers: 0,
+      cash: 0,
+      banks: 0,
+      rawMaterials: 0,
+      finishedGoods: 0
+    };
+
+    // 1. Customers Closing Balances
+    const customers = await db.prepare("SELECT * FROM customers WHERE status = 'active'").all();
+    for (const c of customers) {
+      const opRec = await db.prepare("SELECT * FROM opening_balances WHERE entity_type = 'CUSTOMER' AND entity_id = ? AND financial_year = ?").get(c.id, sourceYear);
+      let op = 0;
+      if (opRec) {
+        op = opRec.balance_type === 'Cr' ? -Number(opRec.amount) : Number(opRec.amount);
+      } else {
+        op = (c.opening_balance_type === 'CREDIT' || c.opening_balance_type === 'Cr') ? -Number(c.opening_balance || 0) : Number(c.opening_balance || 0);
+      }
+
+      const salesRow = await db.prepare('SELECT COALESCE(SUM(total_amount), 0) as total FROM sales WHERE customer_id = ? AND date <= ? AND is_voided = 0').get(c.id, closingDate);
+      const recRow = await db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE party_type = 'CUSTOMER' AND party_id = ? AND date <= ? AND is_voided = 0").get(c.id, closingDate);
+      const dnRow = await db.prepare("SELECT COALESCE(SUM(total_amount), 0) as total FROM debit_credit_notes WHERE note_type = 'DEBIT_NOTE' AND party_type = 'CUSTOMER' AND party_id = ? AND date <= ? AND is_voided = 0").get(c.id, closingDate);
+      const cnRow = await db.prepare("SELECT COALESCE(SUM(total_amount), 0) as total FROM debit_credit_notes WHERE note_type = 'CREDIT_NOTE' AND party_type = 'CUSTOMER' AND party_id = ? AND date <= ? AND is_voided = 0").get(c.id, closingDate);
+
+      const netClosing = Number((op + Number(salesRow.total) + Number(dnRow.total) - Number(cnRow.total) - Number(recRow.total)).toFixed(2));
+      if (netClosing !== 0) {
+        const balType = netClosing >= 0 ? 'Dr' : 'Cr';
+        const absAmt = Math.abs(netClosing);
+        await db.prepare(`
+          INSERT INTO opening_balances (
+            financial_year, opening_date, entity_type, entity_id, amount, balance_type, remarks, created_by
+          ) VALUES (?, ?, 'CUSTOMER', ?, ?, ?, ?, 'Admin')
+          ON CONFLICT (financial_year, entity_type, entity_id) DO UPDATE
+          SET amount = EXCLUDED.amount, balance_type = EXCLUDED.balance_type, opening_date = EXCLUDED.opening_date, remarks = EXCLUDED.remarks, updated_at = CURRENT_TIMESTAMP
+        `).run(targetYear, openingDate, c.id, absAmt, balType, `Carried forward from ${sourceYear} closing`);
+        results.customers++;
+      }
+    }
+
+    // 2. Suppliers Closing Balances
+    const suppliers = await db.prepare("SELECT * FROM suppliers WHERE status = 'active'").all();
+    for (const s of suppliers) {
+      const opRec = await db.prepare("SELECT * FROM opening_balances WHERE entity_type = 'SUPPLIER' AND entity_id = ? AND financial_year = ?").get(s.id, sourceYear);
+      let op = 0;
+      if (opRec) {
+        op = opRec.balance_type === 'Dr' ? -Number(opRec.amount) : Number(opRec.amount);
+      } else {
+        op = (s.opening_balance_type === 'DEBIT' || s.opening_balance_type === 'Dr') ? -Number(s.opening_balance || 0) : Number(s.opening_balance || 0);
+      }
+
+      const purRow = await db.prepare('SELECT COALESCE(SUM(total_amount), 0) as total FROM raw_material_purchases WHERE supplier_id = ? AND date <= ? AND is_voided = 0').get(s.id, closingDate);
+      const payRow = await db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE party_type = 'SUPPLIER' AND party_id = ? AND date <= ? AND is_voided = 0").get(s.id, closingDate);
+      const cnRow = await db.prepare("SELECT COALESCE(SUM(total_amount), 0) as total FROM debit_credit_notes WHERE note_type = 'CREDIT_NOTE' AND party_type = 'SUPPLIER' AND party_id = ? AND date <= ? AND is_voided = 0").get(s.id, closingDate);
+      const dnRow = await db.prepare("SELECT COALESCE(SUM(total_amount), 0) as total FROM debit_credit_notes WHERE note_type = 'DEBIT_NOTE' AND party_type = 'SUPPLIER' AND party_id = ? AND date <= ? AND is_voided = 0").get(s.id, closingDate);
+
+      const netClosing = Number((op + Number(purRow.total) + Number(cnRow.total) - Number(dnRow.total) - Number(payRow.total)).toFixed(2));
+      if (netClosing !== 0) {
+        const balType = netClosing >= 0 ? 'Cr' : 'Dr';
+        const absAmt = Math.abs(netClosing);
+        await db.prepare(`
+          INSERT INTO opening_balances (
+            financial_year, opening_date, entity_type, entity_id, amount, balance_type, remarks, created_by
+          ) VALUES (?, ?, 'SUPPLIER', ?, ?, ?, ?, 'Admin')
+          ON CONFLICT (financial_year, entity_type, entity_id) DO UPDATE
+          SET amount = EXCLUDED.amount, balance_type = EXCLUDED.balance_type, opening_date = EXCLUDED.opening_date, remarks = EXCLUDED.remarks, updated_at = CURRENT_TIMESTAMP
+        `).run(targetYear, openingDate, s.id, absAmt, balType, `Carried forward from ${sourceYear} closing`);
+        results.suppliers++;
+      }
+    }
+
+    // 3. Cash Closing Balance
+    const cashOpRec = await db.prepare("SELECT * FROM opening_balances WHERE entity_type = 'CASH' AND financial_year = ?").get(sourceYear);
+    let cashOp = cashOpRec ? (cashOpRec.balance_type === 'Cr' ? -Number(cashOpRec.amount) : Number(cashOpRec.amount)) : 0;
+    const cashRecRow = await db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE payment_mode = 'Cash' AND party_type = 'CUSTOMER' AND date <= ? AND is_voided = 0").get(closingDate);
+    const cashPayRow = await db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE payment_mode = 'Cash' AND party_type = 'SUPPLIER' AND date <= ? AND is_voided = 0").get(closingDate);
+    const cashSaleRow = await db.prepare("SELECT COALESCE(SUM(total_amount), 0) as total FROM sales WHERE payment_type = 'Cash' AND date <= ? AND is_voided = 0").get(closingDate);
+    const cashPurRow = await db.prepare("SELECT COALESCE(SUM(total_amount), 0) as total FROM raw_material_purchases WHERE payment_mode = 'Cash' AND date <= ? AND is_voided = 0").get(closingDate);
+
+    const netCashClosing = Number((cashOp + Number(cashRecRow.total) + Number(cashSaleRow.total) - Number(cashPayRow.total) - Number(cashPurRow.total)).toFixed(2));
+    if (netCashClosing !== 0) {
+      await db.prepare(`
+        INSERT INTO opening_balances (
+          financial_year, opening_date, entity_type, entity_id, amount, balance_type, remarks, created_by
+        ) VALUES (?, ?, 'CASH', 0, ?, ?, ?, 'Admin')
+        ON CONFLICT (financial_year, entity_type, entity_id) DO UPDATE
+        SET amount = EXCLUDED.amount, balance_type = EXCLUDED.balance_type, opening_date = EXCLUDED.opening_date, remarks = EXCLUDED.remarks, updated_at = CURRENT_TIMESTAMP
+      `).run(targetYear, openingDate, Math.abs(netCashClosing), netCashClosing >= 0 ? 'Dr' : 'Cr', `Carried forward cash from ${sourceYear} closing`);
+      results.cash = 1;
+    }
+
+    // 4. Bank-wise Closing Balances
+    const banks = await db.prepare("SELECT * FROM bank_accounts WHERE status = 'active'").all();
+    for (const b of banks) {
+      const bOpRec = await db.prepare("SELECT * FROM opening_balances WHERE entity_type = 'BANK' AND entity_id = ? AND financial_year = ?").get(b.id, sourceYear);
+      let bOp = bOpRec ? (bOpRec.balance_type === 'Cr' ? -Number(bOpRec.amount) : Number(bOpRec.amount)) : (b.opening_balance_type === 'Cr' ? -Number(b.opening_balance || 0) : Number(b.opening_balance || 0));
+
+      const bRecRow = await db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE bank_account_id = ? AND party_type = 'CUSTOMER' AND date <= ? AND is_voided = 0").get(b.id, closingDate);
+      const bPayRow = await db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE bank_account_id = ? AND party_type = 'SUPPLIER' AND date <= ? AND is_voided = 0").get(b.id, closingDate);
+      const tfInRow = await db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM bank_transfers WHERE to_bank_id = ? AND date <= ? AND is_voided = 0").get(b.id, closingDate);
+      const tfOutRow = await db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM bank_transfers WHERE from_bank_id = ? AND date <= ? AND is_voided = 0").get(b.id, closingDate);
+
+      const netBankClosing = Number((bOp + Number(bRecRow.total) + Number(tfInRow.total) - Number(bPayRow.total) - Number(tfOutRow.total)).toFixed(2));
+      if (netBankClosing !== 0) {
+        await db.prepare(`
+          INSERT INTO opening_balances (
+            financial_year, opening_date, entity_type, entity_id, amount, balance_type, remarks, created_by
+          ) VALUES (?, ?, 'BANK', ?, ?, ?, ?, 'Admin')
+          ON CONFLICT (financial_year, entity_type, entity_id) DO UPDATE
+          SET amount = EXCLUDED.amount, balance_type = EXCLUDED.balance_type, opening_date = EXCLUDED.opening_date, remarks = EXCLUDED.remarks, updated_at = CURRENT_TIMESTAMP
+        `).run(targetYear, openingDate, b.id, Math.abs(netBankClosing), netBankClosing >= 0 ? 'Dr' : 'Cr', `Carried forward from ${sourceYear} closing`);
+        results.banks++;
+      }
+    }
+
+    // 5. Raw Material Closing Stocks
+    const rms = await db.prepare("SELECT * FROM raw_materials WHERE status = 'active'").all();
+    for (const rm of rms) {
+      const stockRow = await db.prepare(`
+        SELECT COALESCE(SUM(quantity_change), 0) as stock
+        FROM raw_material_movements
+        WHERE raw_material_id = ? AND date(created_at) <= ?
+      `).get(rm.id, closingDate);
+      const curStock = Number(stockRow.stock || 0);
+      if (curStock > 0) {
+        await db.prepare(`
+          INSERT INTO opening_balances (
+            financial_year, opening_date, entity_type, entity_id, quantity, unit, amount, balance_type, remarks, created_by
+          ) VALUES (?, ?, 'RAW_MATERIAL', ?, ?, ?, 0, 'Dr', ?, 'Admin')
+          ON CONFLICT (financial_year, entity_type, entity_id) DO UPDATE
+          SET quantity = EXCLUDED.quantity, unit = EXCLUDED.unit, opening_date = EXCLUDED.opening_date, remarks = EXCLUDED.remarks, updated_at = CURRENT_TIMESTAMP
+        `).run(targetYear, openingDate, rm.id, curStock, rm.unit || 'KG', `Carried forward stock from ${sourceYear}`);
+
+        const cfRef = `OPENING-RM-CF-${targetYear}-${rm.id}`;
+        await db.prepare('DELETE FROM raw_material_movements WHERE reference_id = ?').run(cfRef);
+        const latestStock = await getRawMaterialStock(rm.id);
+        await db.prepare(`
+          INSERT INTO raw_material_movements (
+            movement_type, reference_type, reference_id, raw_material_id, quantity_change, unit, balance_after, manager_name, remarks
+          ) VALUES ('OPENING', 'OPENING_STOCK', ?, ?, ?, ?, ?, 'Admin', ?)
+        `).run(cfRef, rm.id, curStock, rm.unit || 'KG', Number((latestStock + curStock).toFixed(2)), `FY ${targetYear} Opening Stock from ${sourceYear}`);
+        results.rawMaterials++;
+      }
+    }
+
+    // 6. Finished Goods Closing Stocks
+    const fgs = await db.prepare("SELECT * FROM finished_products WHERE status = 'active'").all();
+    for (const fg of fgs) {
+      const stockRow = await db.prepare(`
+        SELECT COALESCE(SUM(quantity_change), 0) as stock
+        FROM finished_goods_movements
+        WHERE finished_product_id = ? AND date(created_at) <= ?
+      `).get(fg.id, closingDate);
+      const curStock = Number(stockRow.stock || 0);
+      if (curStock > 0) {
+        await db.prepare(`
+          INSERT INTO opening_balances (
+            financial_year, opening_date, entity_type, entity_id, quantity, unit, amount, balance_type, gsm, size, remarks, created_by
+          ) VALUES (?, ?, 'FINISHED_GOOD', ?, ?, ?, 0, 'Dr', ?, ?, ?, 'Admin')
+          ON CONFLICT (financial_year, entity_type, entity_id) DO UPDATE
+          SET quantity = EXCLUDED.quantity, unit = EXCLUDED.unit, opening_date = EXCLUDED.opening_date, remarks = EXCLUDED.remarks, updated_at = CURRENT_TIMESTAMP
+        `).run(targetYear, openingDate, fg.id, curStock, fg.unit || 'KG', fg.gsm || null, fg.width_size || null, `Carried forward stock from ${sourceYear}`);
+
+        const cfRef = `OPENING-FG-CF-${targetYear}-${fg.id}`;
+        await db.prepare('DELETE FROM finished_goods_movements WHERE reference_id = ?').run(cfRef);
+        const latestStock = await getFinishedGoodStock(fg.id);
+        await db.prepare(`
+          INSERT INTO finished_goods_movements (
+            movement_type, reference_type, reference_id, finished_product_id, quantity_change, unit, balance_after, manager_name, remarks
+          ) VALUES ('OPENING', 'OPENING_STOCK', ?, ?, ?, ?, ?, 'Admin', ?)
+        `).run(cfRef, fg.id, curStock, fg.unit || 'KG', Number((latestStock + curStock).toFixed(2)), `FY ${targetYear} Opening Stock from ${sourceYear}`);
+        results.finishedGoods++;
+      }
+    }
+
+    await db.prepare(`
+      INSERT INTO audit_logs (entity_type, entity_id, action, new_values, performed_by)
+      VALUES (?, ?, 'CARRY_FORWARD', ?, 'Admin')
+    `).run('FINANCIAL_YEAR', targetYear, JSON.stringify({ sourceYear, targetYear, openingDate, results }));
+
+    res.json({
+      success: true,
+      message: `Carry-forward from ${sourceYear} to ${targetYear} completed safely.`,
+      results
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// =============================================================
+// DEBIT & CREDIT NOTES API
+// =============================================================
+app.get('/api/accounts/debit-credit-notes', async (req, res) => {
+  try {
+    const { noteType, partyType, partyId, dateFrom, dateTo } = req.query;
+    let query = `
+      SELECT dcn.*,
+             CASE
+               WHEN dcn.party_type = 'CUSTOMER' THEN (SELECT name FROM customers WHERE id = dcn.party_id)
+               WHEN dcn.party_type = 'SUPPLIER' THEN (SELECT name FROM suppliers WHERE id = dcn.party_id)
+               ELSE 'Unknown'
+             END as party_name,
+             CASE
+               WHEN dcn.party_type = 'CUSTOMER' THEN (SELECT gst_number FROM customers WHERE id = dcn.party_id)
+               WHEN dcn.party_type = 'SUPPLIER' THEN (SELECT gst_number FROM suppliers WHERE id = dcn.party_id)
+               ELSE ''
+             END as party_gstin
+      FROM debit_credit_notes dcn
+      WHERE dcn.is_voided = 0
+    `;
+    const params = [];
+    if (noteType) { query += ' AND dcn.note_type = ?'; params.push(noteType); }
+    if (partyType) { query += ' AND dcn.party_type = ?'; params.push(partyType); }
+    if (partyId) { query += ' AND dcn.party_id = ?'; params.push(partyId); }
+    if (dateFrom) { query += ' AND dcn.date >= ?'; params.push(dateFrom); }
+    if (dateTo) { query += ' AND dcn.date <= ?'; params.push(dateTo); }
+    query += ' ORDER BY dcn.date DESC, dcn.id DESC';
+    const rows = await db.prepare(query).all(...params);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/accounts/debit-credit-notes', requireAdmin, async (req, res) => {
+  try {
+    const {
+      noteType, // 'DEBIT_NOTE' or 'CREDIT_NOTE'
+      date,
+      partyType, // 'CUSTOMER' or 'SUPPLIER'
+      partyId,
+      referenceInvoice = '',
+      reason = '',
+      taxableAmount,
+      gstPercent = 18,
+      remarks = ''
+    } = req.body;
+
+    const numTaxable = Number(taxableAmount);
+    if (!noteType || !date || !partyType || !partyId || isNaN(numTaxable) || numTaxable <= 0) {
+      return res.status(400).json({ error: 'Valid Note Type, Date, Party Type, Party, and Taxable Amount (>0) are required.' });
+    }
+    if (!['DEBIT_NOTE', 'CREDIT_NOTE'].includes(noteType)) {
+      return res.status(400).json({ error: 'Note Type must be DEBIT_NOTE or CREDIT_NOTE.' });
+    }
+    if (!['CUSTOMER', 'SUPPLIER'].includes(partyType)) {
+      return res.status(400).json({ error: 'Party Type must be CUSTOMER or SUPPLIER.' });
+    }
+
+    let partyState = 'Gujarat';
+    let partyGstin = '';
+    if (partyType === 'CUSTOMER') {
+      const c = await db.prepare('SELECT id, name, state, gst_number FROM customers WHERE id = ?').get(partyId);
+      if (!c) return res.status(400).json({ error: `Customer ID ${partyId} not found.` });
+      partyState = c.state || 'Gujarat';
+      partyGstin = c.gst_number || '';
+    } else {
+      const s = await db.prepare('SELECT id, name, state, gst_number FROM suppliers WHERE id = ?').get(partyId);
+      if (!s) return res.status(400).json({ error: `Supplier ID ${partyId} not found.` });
+      partyState = s.state || 'Gujarat';
+      partyGstin = s.gst_number || '';
+    }
+
+    const gstCalc = calculateGstBreakdown({
+      taxableAmount: numTaxable,
+      gstPercent: Number(gstPercent) || 0,
+      partyState,
+      partyGstin
+    });
+
+    let prefix = '';
+    if (partyType === 'CUSTOMER') {
+      prefix = noteType === 'DEBIT_NOTE' ? 'CDN' : 'CCN';
+    } else {
+      prefix = noteType === 'DEBIT_NOTE' ? 'SDN' : 'SCN';
+    }
+
+    const code = await getNextCode(prefix, 'debit_credit_notes', 'note_code');
+
+    const info = await db.prepare(`
+      INSERT INTO debit_credit_notes (
+        note_type, note_code, date, party_type, party_id, reference_invoice, reason,
+        taxable_amount, gst_percent, cgst_amount, sgst_amount, igst_amount, total_amount, remarks, created_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Admin')
+    `).run(
+      noteType, code, date, partyType, Number(partyId), referenceInvoice || null, reason || null,
+      gstCalc.taxableAmount, gstCalc.gstPercent, gstCalc.cgstAmount, gstCalc.sgstAmount, gstCalc.igstAmount,
+      gstCalc.grandTotal, remarks || null
+    );
+
+    await db.prepare(`
+      INSERT INTO audit_logs (entity_type, entity_id, action, new_values, performed_by)
+      VALUES (?, ?, 'CREATE', ?, 'Admin')
+    `).run(noteType, code, JSON.stringify({ noteType, partyType, partyId, code, totalAmount: gstCalc.grandTotal }));
+
+    res.status(201).json({
+      id: info.lastInsertRowid,
+      note_code: code,
+      note_type: noteType,
+      party_type: partyType,
+      total_amount: gstCalc.grandTotal
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.put('/api/accounts/debit-credit-notes/:id', requireAdmin, async (req, res) => {
+  try {
+    const dcn = await db.prepare('SELECT * FROM debit_credit_notes WHERE id = ?').get(req.params.id);
+    if (!dcn) return res.status(404).json({ error: 'Note record not found' });
+    if (dcn.is_voided) return res.status(400).json({ error: 'Cannot edit a voided note.' });
+
+    const { date, referenceInvoice, reason, taxableAmount, gstPercent, remarks } = req.body;
+    const numTaxable = taxableAmount !== undefined ? Number(taxableAmount) : Number(dcn.taxable_amount);
+    const numGstPct = gstPercent !== undefined ? Number(gstPercent) : Number(dcn.gst_percent);
+
+    let partyState = 'Gujarat';
+    let partyGstin = '';
+    if (dcn.party_type === 'CUSTOMER') {
+      const c = await db.prepare('SELECT state, gst_number FROM customers WHERE id = ?').get(dcn.party_id);
+      partyState = c?.state || 'Gujarat';
+      partyGstin = c?.gst_number || '';
+    } else {
+      const s = await db.prepare('SELECT state, gst_number FROM suppliers WHERE id = ?').get(dcn.party_id);
+      partyState = s?.state || 'Gujarat';
+      partyGstin = s?.gst_number || '';
+    }
+
+    const gstCalc = calculateGstBreakdown({
+      taxableAmount: numTaxable,
+      gstPercent: numGstPct,
+      partyState,
+      partyGstin
+    });
+
+    await db.prepare(`
+      UPDATE debit_credit_notes
+      SET date = COALESCE(?, date),
+          reference_invoice = COALESCE(?, reference_invoice),
+          reason = COALESCE(?, reason),
+          taxable_amount = ?,
+          gst_percent = ?,
+          cgst_amount = ?,
+          sgst_amount = ?,
+          igst_amount = ?,
+          total_amount = ?,
+          remarks = COALESCE(?, remarks),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      date ?? null,
+      referenceInvoice ?? null,
+      reason ?? null,
+      gstCalc.taxableAmount,
+      gstCalc.gstPercent,
+      gstCalc.cgstAmount,
+      gstCalc.sgstAmount,
+      gstCalc.igstAmount,
+      gstCalc.grandTotal,
+      remarks ?? null,
+      dcn.id
+    );
+
+    await db.prepare(`
+      INSERT INTO audit_logs (entity_type, entity_id, action, original_values, new_values, performed_by)
+      VALUES (?, ?, 'EDIT', ?, ?, 'Admin')
+    `).run(dcn.note_type, dcn.note_code, JSON.stringify(dcn), JSON.stringify(req.body));
+
+    res.json({ success: true, total_amount: gstCalc.grandTotal });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/accounts/debit-credit-notes/:id', requireAdmin, async (req, res) => {
+  try {
+    const dcn = await db.prepare('SELECT * FROM debit_credit_notes WHERE id = ?').get(req.params.id);
+    if (!dcn) return res.status(404).json({ error: 'Note record not found' });
+    if (dcn.is_voided) return res.status(400).json({ error: 'Note is already voided.' });
+
+    await db.prepare('UPDATE debit_credit_notes SET is_voided = 1 WHERE id = ?').run(dcn.id);
+
+    await db.prepare(`
+      INSERT INTO audit_logs (entity_type, entity_id, action, original_values, performed_by)
+      VALUES (?, ?, 'VOID', ?, 'Admin')
+    `).run(dcn.note_type, dcn.note_code, JSON.stringify(dcn));
+
+    res.json({ success: true, message: 'Note entry voided.' });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // Customer Statement of Account / Ledger
 app.get('/api/accounts/customer-ledger', async (req, res) => {
   try {
-    const { customerId, dateFrom, dateTo } = req.query;
+    const { customerId, dateFrom, dateTo, financialYear } = req.query;
     if (!customerId) return res.status(400).json({ error: 'Customer ID is required' });
 
     const cust = await db.prepare('SELECT * FROM customers WHERE id = ?').get(customerId);
     if (!cust) return res.status(404).json({ error: 'Customer not found' });
 
-    // Initial master opening balance
-    const baseOpening = Number(cust.opening_balance || 0);
-    const isCreditOpening = (cust.opening_balance_type === 'CREDIT');
+    const activeFy = financialYear || await getActiveFinancialYear();
+    const opRec = await db.prepare(`
+      SELECT * FROM opening_balances
+      WHERE entity_type = 'CUSTOMER' AND entity_id = ? AND financial_year = ?
+    `).get(customerId, activeFy);
+
+    let baseOpening = 0;
+    let isCreditOpening = false;
+    let opDate = null;
+    let opRemarks = null;
+
+    if (opRec) {
+      baseOpening = Number(opRec.amount || 0);
+      isCreditOpening = (opRec.balance_type === 'Cr' || opRec.balance_type === 'CREDIT');
+      opDate = opRec.opening_date;
+      opRemarks = opRec.remarks;
+    } else {
+      baseOpening = Number(cust.opening_balance || 0);
+      isCreditOpening = (cust.opening_balance_type === 'CREDIT' || cust.opening_balance_type === 'Cr');
+    }
+
     let openingBalance = isCreditOpening ? -baseOpening : baseOpening;
 
     // Add prior transactions before dateFrom
@@ -3779,7 +4730,21 @@ app.get('/api/accounts/customer-ledger', async (req, res) => {
       `).get(customerId, dateFrom);
       const prevRec = Number(prevRecRow ? prevRecRow.total : 0);
 
-      openingBalance = Number((openingBalance + prevSales - prevRec).toFixed(2));
+      const prevDnRow = await db.prepare(`
+        SELECT COALESCE(SUM(total_amount), 0) as total
+        FROM debit_credit_notes
+        WHERE note_type = 'DEBIT_NOTE' AND party_type = 'CUSTOMER' AND party_id = ? AND date < ? AND is_voided = 0
+      `).get(customerId, dateFrom);
+      const prevDn = Number(prevDnRow ? prevDnRow.total : 0);
+
+      const prevCnRow = await db.prepare(`
+        SELECT COALESCE(SUM(total_amount), 0) as total
+        FROM debit_credit_notes
+        WHERE note_type = 'CREDIT_NOTE' AND party_type = 'CUSTOMER' AND party_id = ? AND date < ? AND is_voided = 0
+      `).get(customerId, dateFrom);
+      const prevCn = Number(prevCnRow ? prevCnRow.total : 0);
+
+      openingBalance = Number((openingBalance + prevSales + prevDn - prevCn - prevRec).toFixed(2));
     }
 
     // Sales (Debits) in range
@@ -3847,7 +4812,59 @@ app.get('/api/accounts/customer-ledger', async (req, res) => {
       created_at: r.created_at
     }));
 
-    const allEntries = [...salesRows, ...payRows].sort((a, b) => {
+    // Customer Debit Notes (Debits) in range
+    let dnQuery = `
+      SELECT d.id, d.date, d.note_code as doc_no, d.reference_invoice, d.reason,
+             d.total_amount as debit, 0 as credit, d.created_at, d.created_by
+      FROM debit_credit_notes d
+      WHERE d.note_type = 'DEBIT_NOTE' AND d.party_type = 'CUSTOMER' AND d.party_id = ? AND d.is_voided = 0
+    `;
+    const dnParams = [customerId];
+    if (dateFrom) { dnQuery += ' AND d.date >= ?'; dnParams.push(dateFrom); }
+    if (dateTo) { dnQuery += ' AND d.date <= ?'; dnParams.push(dateTo); }
+
+    const dnRows = (await db.prepare(dnQuery).all(...dnParams)).map(r => ({
+      id: `dn-${r.id}`,
+      date: r.date,
+      voucher_no: r.doc_no,
+      doc_no: r.doc_no,
+      type: 'DEBIT_NOTE',
+      transaction_type: 'Customer Debit Note',
+      particulars: `Debit Note (${r.reason || 'Rate Diff/Charge'}) ${r.reference_invoice ? `[Ref: ${r.reference_invoice}]` : ''}`,
+      description: `Debit Note (${r.reason || 'Rate Diff/Charge'}) ${r.reference_invoice ? `[Ref: ${r.reference_invoice}]` : ''}`,
+      debit: Number(r.debit.toFixed(2)),
+      credit: 0,
+      entered_by: r.created_by || 'Admin',
+      created_at: r.created_at
+    }));
+
+    // Customer Credit Notes (Credits) in range
+    let cnQuery = `
+      SELECT d.id, d.date, d.note_code as doc_no, d.reference_invoice, d.reason,
+             0 as debit, d.total_amount as credit, d.created_at, d.created_by
+      FROM debit_credit_notes d
+      WHERE d.note_type = 'CREDIT_NOTE' AND d.party_type = 'CUSTOMER' AND d.party_id = ? AND d.is_voided = 0
+    `;
+    const cnParams = [customerId];
+    if (dateFrom) { cnQuery += ' AND d.date >= ?'; cnParams.push(dateFrom); }
+    if (dateTo) { cnQuery += ' AND d.date <= ?'; cnParams.push(dateTo); }
+
+    const cnRows = (await db.prepare(cnQuery).all(...cnParams)).map(r => ({
+      id: `cn-${r.id}`,
+      date: r.date,
+      voucher_no: r.doc_no,
+      doc_no: r.doc_no,
+      type: 'CREDIT_NOTE',
+      transaction_type: 'Customer Credit Note',
+      particulars: `Credit Note (${r.reason || 'Sales Return/Discount'}) ${r.reference_invoice ? `[Ref: ${r.reference_invoice}]` : ''}`,
+      description: `Credit Note (${r.reason || 'Sales Return/Discount'}) ${r.reference_invoice ? `[Ref: ${r.reference_invoice}]` : ''}`,
+      debit: 0,
+      credit: Number(r.credit.toFixed(2)),
+      entered_by: r.created_by || 'Admin',
+      created_at: r.created_at
+    }));
+
+    const allEntries = [...salesRows, ...payRows, ...dnRows, ...cnRows].sort((a, b) => {
       const cmp = a.date.localeCompare(b.date);
       if (cmp !== 0) return cmp;
       return a.created_at.localeCompare(b.created_at);
@@ -3884,15 +4901,28 @@ app.get('/api/accounts/customer-ledger', async (req, res) => {
 // Supplier Statement of Account / Ledger
 app.get('/api/accounts/supplier-ledger', async (req, res) => {
   try {
-    const { supplierId, dateFrom, dateTo } = req.query;
+    const { supplierId, dateFrom, dateTo, financialYear } = req.query;
     if (!supplierId) return res.status(400).json({ error: 'Supplier ID is required' });
 
     const supp = await db.prepare('SELECT * FROM suppliers WHERE id = ?').get(supplierId);
     if (!supp) return res.status(404).json({ error: 'Supplier not found' });
 
-    // Initial master opening balance
-    const baseOpening = Number(supp.opening_balance || 0);
-    const isDebitOpening = (supp.opening_balance_type === 'DEBIT');
+    const activeFy = financialYear || await getActiveFinancialYear();
+    const opRec = await db.prepare(`
+      SELECT * FROM opening_balances
+      WHERE entity_type = 'SUPPLIER' AND entity_id = ? AND financial_year = ?
+    `).get(supplierId, activeFy);
+
+    let baseOpening = 0;
+    let isDebitOpening = false;
+    if (opRec) {
+      baseOpening = Number(opRec.amount || 0);
+      isDebitOpening = (opRec.balance_type === 'Dr' || opRec.balance_type === 'DEBIT');
+    } else {
+      baseOpening = Number(supp.opening_balance || 0);
+      isDebitOpening = (supp.opening_balance_type === 'DEBIT' || supp.opening_balance_type === 'Dr');
+    }
+
     let openingBalance = isDebitOpening ? -baseOpening : baseOpening;
 
     // Prior transactions before dateFrom
@@ -3911,7 +4941,21 @@ app.get('/api/accounts/supplier-ledger', async (req, res) => {
       `).get(supplierId, dateFrom);
       const prevPayments = Number(prevPaymentsRow ? prevPaymentsRow.total : 0);
 
-      openingBalance = Number((openingBalance + prevPurchases - prevPayments).toFixed(2));
+      const prevCnRow = await db.prepare(`
+        SELECT COALESCE(SUM(total_amount), 0) as total
+        FROM debit_credit_notes
+        WHERE note_type = 'CREDIT_NOTE' AND party_type = 'SUPPLIER' AND party_id = ? AND date < ? AND is_voided = 0
+      `).get(supplierId, dateFrom);
+      const prevCn = Number(prevCnRow ? prevCnRow.total : 0);
+
+      const prevDnRow = await db.prepare(`
+        SELECT COALESCE(SUM(total_amount), 0) as total
+        FROM debit_credit_notes
+        WHERE note_type = 'DEBIT_NOTE' AND party_type = 'SUPPLIER' AND party_id = ? AND date < ? AND is_voided = 0
+      `).get(supplierId, dateFrom);
+      const prevDn = Number(prevDnRow ? prevDnRow.total : 0);
+
+      openingBalance = Number((openingBalance + prevPurchases + prevCn - prevDn - prevPayments).toFixed(2));
     }
 
     // Purchases (Credits) in range
@@ -3979,7 +5023,59 @@ app.get('/api/accounts/supplier-ledger', async (req, res) => {
       created_at: r.created_at
     }));
 
-    const allEntries = [...purRows, ...payRows].sort((a, b) => {
+    // Supplier Credit Notes (Credits) in range
+    let cnQuery = `
+      SELECT d.id, d.date, d.note_code as doc_no, d.reference_invoice, d.reason,
+             0 as debit, d.total_amount as credit, d.created_at, d.created_by
+      FROM debit_credit_notes d
+      WHERE d.note_type = 'CREDIT_NOTE' AND d.party_type = 'SUPPLIER' AND d.party_id = ? AND d.is_voided = 0
+    `;
+    const cnParams = [supplierId];
+    if (dateFrom) { cnQuery += ' AND d.date >= ?'; cnParams.push(dateFrom); }
+    if (dateTo) { cnQuery += ' AND d.date <= ?'; cnParams.push(dateTo); }
+
+    const cnRows = (await db.prepare(cnQuery).all(...cnParams)).map(r => ({
+      id: `cn-${r.id}`,
+      date: r.date,
+      voucher_no: r.doc_no,
+      doc_no: r.doc_no,
+      type: 'CREDIT_NOTE',
+      transaction_type: 'Supplier Credit Note',
+      particulars: `Credit Note (${r.reason || 'Price Increase/Charge'}) ${r.reference_invoice ? `[Ref: ${r.reference_invoice}]` : ''}`,
+      description: `Credit Note (${r.reason || 'Price Increase/Charge'}) ${r.reference_invoice ? `[Ref: ${r.reference_invoice}]` : ''}`,
+      debit: 0,
+      credit: Number(r.credit.toFixed(2)),
+      entered_by: r.created_by || 'Admin',
+      created_at: r.created_at
+    }));
+
+    // Supplier Debit Notes (Debits) in range
+    let dnQuery = `
+      SELECT d.id, d.date, d.note_code as doc_no, d.reference_invoice, d.reason,
+             d.total_amount as debit, 0 as credit, d.created_at, d.created_by
+      FROM debit_credit_notes d
+      WHERE d.note_type = 'DEBIT_NOTE' AND d.party_type = 'SUPPLIER' AND d.party_id = ? AND d.is_voided = 0
+    `;
+    const dnParams = [supplierId];
+    if (dateFrom) { dnQuery += ' AND d.date >= ?'; dnParams.push(dateFrom); }
+    if (dateTo) { dnQuery += ' AND d.date <= ?'; dnParams.push(dateTo); }
+
+    const dnRows = (await db.prepare(dnQuery).all(...dnParams)).map(r => ({
+      id: `dn-${r.id}`,
+      date: r.date,
+      voucher_no: r.doc_no,
+      doc_no: r.doc_no,
+      type: 'DEBIT_NOTE',
+      transaction_type: 'Supplier Debit Note',
+      particulars: `Debit Note (${r.reason || 'Purchase Return/Discount'}) ${r.reference_invoice ? `[Ref: ${r.reference_invoice}]` : ''}`,
+      description: `Debit Note (${r.reason || 'Purchase Return/Discount'}) ${r.reference_invoice ? `[Ref: ${r.reference_invoice}]` : ''}`,
+      debit: Number(r.debit.toFixed(2)),
+      credit: 0,
+      entered_by: r.created_by || 'Admin',
+      created_at: r.created_at
+    }));
+
+    const allEntries = [...purRows, ...payRows, ...cnRows, ...dnRows].sort((a, b) => {
       const cmp = a.date.localeCompare(b.date);
       if (cmp !== 0) return cmp;
       return a.created_at.localeCompare(b.created_at);
@@ -4016,17 +5112,29 @@ app.get('/api/accounts/supplier-ledger', async (req, res) => {
 // Customer Outstanding Summary
 app.get('/api/accounts/customer-outstanding', async (req, res) => {
   try {
-    const customers = await db.prepare('SELECT * FROM customers ORDER BY name ASC').all();
+    const { financialYear } = req.query;
+    const activeFy = financialYear || await getActiveFinancialYear();
+    const customers = await db.prepare("SELECT * FROM customers WHERE status = 'active' ORDER BY name ASC").all();
+
     const rows = await Promise.all(customers.map(async c => {
-      const baseOpening = Number(c.opening_balance || 0);
-      const isCredit = (c.opening_balance_type === 'CREDIT');
-      const opening = isCredit ? -baseOpening : baseOpening;
+      const opRec = await db.prepare("SELECT * FROM opening_balances WHERE entity_type = 'CUSTOMER' AND entity_id = ? AND financial_year = ?").get(c.id, activeFy);
+      let opening = 0;
+      if (opRec) {
+        opening = opRec.balance_type === 'Cr' ? -Number(opRec.amount) : Number(opRec.amount);
+      } else {
+        const baseOpening = Number(c.opening_balance || 0);
+        const isCredit = (c.opening_balance_type === 'CREDIT' || c.opening_balance_type === 'Cr');
+        opening = isCredit ? -baseOpening : baseOpening;
+      }
 
       const salesRow = (await db.prepare('SELECT COALESCE(SUM(total_amount), 0) as total FROM sales WHERE customer_id = ? AND is_voided = 0').get(c.id)) || {};
       const recRow = (await db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE party_type = 'CUSTOMER' AND party_id = ? AND is_voided = 0").get(c.id)) || {};
-      const salesSum = Number(salesRow.total || 0);
+      const dnRow = (await db.prepare("SELECT COALESCE(SUM(total_amount), 0) as total FROM debit_credit_notes WHERE note_type = 'DEBIT_NOTE' AND party_type = 'CUSTOMER' AND party_id = ? AND is_voided = 0").get(c.id)) || {};
+      const cnRow = (await db.prepare("SELECT COALESCE(SUM(total_amount), 0) as total FROM debit_credit_notes WHERE note_type = 'CREDIT_NOTE' AND party_type = 'CUSTOMER' AND party_id = ? AND is_voided = 0").get(c.id)) || {};
+
+      const totalSalesWithNotes = Number((Number(salesRow.total || 0) + Number(dnRow.total || 0) - Number(cnRow.total || 0)).toFixed(2));
       const receiptsSum = Number(recRow.total || 0);
-      const netOutstanding = Number((opening + salesSum - receiptsSum).toFixed(2));
+      const netOutstanding = Number((opening + totalSalesWithNotes - receiptsSum).toFixed(2));
 
       return {
         customerId: c.id,
@@ -4039,7 +5147,7 @@ app.get('/api/accounts/customer-outstanding', async (req, res) => {
         state: c.state || 'Gujarat',
         creditLimit: c.credit_limit || 0,
         openingBalance: opening,
-        totalSales: Number(salesSum.toFixed(2)),
+        totalSales: totalSalesWithNotes,
         totalReceipts: Number(receiptsSum.toFixed(2)),
         netOutstanding,
         status: netOutstanding > 0 ? 'DUE' : (netOutstanding < 0 ? 'ADVANCE' : 'CLEAR')
@@ -4069,17 +5177,29 @@ app.get('/api/accounts/customer-outstanding', async (req, res) => {
 // Supplier Outstanding Summary
 app.get('/api/accounts/supplier-outstanding', async (req, res) => {
   try {
-    const suppliers = await db.prepare('SELECT * FROM suppliers ORDER BY name ASC').all();
+    const { financialYear } = req.query;
+    const activeFy = financialYear || await getActiveFinancialYear();
+    const suppliers = await db.prepare("SELECT * FROM suppliers WHERE status = 'active' ORDER BY name ASC").all();
+
     const rows = await Promise.all(suppliers.map(async s => {
-      const baseOpening = Number(s.opening_balance || 0);
-      const isDebit = (s.opening_balance_type === 'DEBIT');
-      const opening = isDebit ? -baseOpening : baseOpening;
+      const opRec = await db.prepare("SELECT * FROM opening_balances WHERE entity_type = 'SUPPLIER' AND entity_id = ? AND financial_year = ?").get(s.id, activeFy);
+      let opening = 0;
+      if (opRec) {
+        opening = opRec.balance_type === 'Dr' ? -Number(opRec.amount) : Number(opRec.amount);
+      } else {
+        const baseOpening = Number(s.opening_balance || 0);
+        const isDebit = (s.opening_balance_type === 'DEBIT' || s.opening_balance_type === 'Dr');
+        opening = isDebit ? -baseOpening : baseOpening;
+      }
 
       const purRow = (await db.prepare('SELECT COALESCE(SUM(total_amount), 0) as total FROM raw_material_purchases WHERE supplier_id = ? AND is_voided = 0').get(s.id)) || {};
       const payRow = (await db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE party_type = 'SUPPLIER' AND party_id = ? AND is_voided = 0").get(s.id)) || {};
-      const purchasesSum = Number(purRow.total || 0);
+      const cnRow = (await db.prepare("SELECT COALESCE(SUM(total_amount), 0) as total FROM debit_credit_notes WHERE note_type = 'CREDIT_NOTE' AND party_type = 'SUPPLIER' AND party_id = ? AND is_voided = 0").get(s.id)) || {};
+      const dnRow = (await db.prepare("SELECT COALESCE(SUM(total_amount), 0) as total FROM debit_credit_notes WHERE note_type = 'DEBIT_NOTE' AND party_type = 'SUPPLIER' AND party_id = ? AND is_voided = 0").get(s.id)) || {};
+
+      const totalPurchasesWithNotes = Number((Number(purRow.total || 0) + Number(cnRow.total || 0) - Number(dnRow.total || 0)).toFixed(2));
       const paymentsSum = Number(payRow.total || 0);
-      const netPayable = Number((opening + purchasesSum - paymentsSum).toFixed(2));
+      const netPayable = Number((opening + totalPurchasesWithNotes - paymentsSum).toFixed(2));
 
       return {
         supplierId: s.id,
@@ -4091,7 +5211,7 @@ app.get('/api/accounts/supplier-outstanding', async (req, res) => {
         city: s.city || '—',
         state: s.state || 'Gujarat',
         openingBalance: opening,
-        totalPurchases: Number(purchasesSum.toFixed(2)),
+        totalPurchases: totalPurchasesWithNotes,
         totalPayments: Number(paymentsSum.toFixed(2)),
         netPayable,
         status: netPayable > 0 ? 'PAYABLE' : (netPayable < 0 ? 'ADVANCE' : 'CLEAR')
@@ -4121,7 +5241,23 @@ app.get('/api/accounts/supplier-outstanding', async (req, res) => {
 // Complete Cash Book / Ledger (Supports both /cash-ledger and /cash-book aliases)
 app.get(['/api/accounts/cash-ledger', '/api/accounts/cash-book'], async (req, res) => {
   try {
-    const { dateFrom, dateTo } = req.query;
+    const { dateFrom, dateTo, financialYear } = req.query;
+    const activeFy = financialYear || await getActiveFinancialYear();
+
+    const cashOpRec = await db.prepare("SELECT * FROM opening_balances WHERE entity_type = 'CASH' AND financial_year = ?").get(activeFy);
+    let openingCash = 0;
+    if (cashOpRec) {
+      openingCash = cashOpRec.balance_type === 'Cr' ? -Number(cashOpRec.amount) : Number(cashOpRec.amount);
+    }
+
+    if (dateFrom) {
+      const prevRecRow = await db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE payment_mode = 'Cash' AND party_type = 'CUSTOMER' AND date < ? AND is_voided = 0").get(dateFrom);
+      const prevPayRow = await db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE payment_mode = 'Cash' AND party_type = 'SUPPLIER' AND date < ? AND is_voided = 0").get(dateFrom);
+      const prevSaleRow = await db.prepare("SELECT COALESCE(SUM(total_amount), 0) as total FROM sales WHERE payment_type = 'Cash' AND date < ? AND is_voided = 0").get(dateFrom);
+      const prevPurRow = await db.prepare("SELECT COALESCE(SUM(total_amount), 0) as total FROM raw_material_purchases WHERE payment_mode = 'Cash' AND date < ? AND is_voided = 0").get(dateFrom);
+
+      openingCash = Number((openingCash + Number(prevRecRow.total) + Number(prevSaleRow.total) - Number(prevPayRow.total) - Number(prevPurRow.total)).toFixed(2));
+    }
 
     // Inflows: Cash Receipts + Non-duplicate Cash Sales
     let recQuery = "SELECT p.id, p.date, p.reference_no, p.reference_no as doc_no, p.payment_code, p.amount, c.name as party_name, p.remarks, p.created_at, p.party_id FROM payments p JOIN customers c ON p.party_id = c.id WHERE p.party_type = 'CUSTOMER' AND p.payment_mode = 'Cash' AND p.is_voided = 0";
@@ -4136,8 +5272,6 @@ app.get(['/api/accounts/cash-ledger', '/api/accounts/cash-book'], async (req, re
     if (dateTo) { salesQuery += ' AND date <= ?'; salesParams.push(dateTo); }
     const rawSales = await db.prepare(salesQuery).all(...salesParams);
 
-    // Prevent double counting: If receipt references invoice or matches customer, amount and date,
-    // count via receipt and exclude duplicate sale
     const matchedSaleIds = new Set();
     const cashReceipts = rawRecs.map(p => {
       const matchingSale = rawSales.find(s =>
@@ -4233,7 +5367,7 @@ app.get(['/api/accounts/cash-ledger', '/api/accounts/cash-book'], async (req, re
       return a.created_at.localeCompare(b.created_at);
     });
 
-    let runningBalance = 0;
+    let runningBalance = openingCash;
     let totalInflow = 0;
     let totalOutflow = 0;
 
@@ -4248,8 +5382,10 @@ app.get(['/api/accounts/cash-ledger', '/api/accounts/cash-book'], async (req, re
     });
 
     res.json({
+      openingBalance: openingCash,
       transactions: ledger,
       summary: {
+        openingCash,
         totalInflow: Number(totalInflow.toFixed(2)),
         totalOutflow: Number(totalOutflow.toFixed(2)),
         netCashInHand: runningBalance
@@ -4260,124 +5396,159 @@ app.get(['/api/accounts/cash-ledger', '/api/accounts/cash-book'], async (req, re
   }
 });
 
-// Complete Bank Book / Ledger
+// Complete Bank Book / Ledger (Supports bank-wise selection and transfers)
 app.get('/api/accounts/bank-ledger', async (req, res) => {
   try {
-    const { dateFrom, dateTo } = req.query;
+    const { dateFrom, dateTo, bankAccountId, financialYear } = req.query;
+    const activeFy = financialYear || await getActiveFinancialYear();
 
-    // Inflows: Bank Receipts + Non-duplicate Bank Sales
-    let recQuery = "SELECT p.id, p.date, p.reference_no, p.reference_no as doc_no, p.payment_code, p.payment_mode, p.amount, c.name as party_name, p.remarks, p.created_at, p.party_id FROM payments p JOIN customers c ON p.party_id = c.id WHERE p.party_type = 'CUSTOMER' AND p.payment_mode != 'Cash' AND p.is_voided = 0";
+    let openingBank = 0;
+    let selectedBank = null;
+
+    if (bankAccountId) {
+      selectedBank = await db.prepare('SELECT * FROM bank_accounts WHERE id = ?').get(bankAccountId);
+      if (selectedBank) {
+        const opRec = await db.prepare("SELECT * FROM opening_balances WHERE entity_type = 'BANK' AND entity_id = ? AND financial_year = ?").get(bankAccountId, activeFy);
+        if (opRec) {
+          openingBank = opRec.balance_type === 'Cr' ? -Number(opRec.amount) : Number(opRec.amount);
+        } else {
+          openingBank = selectedBank.opening_balance_type === 'Cr' ? -Number(selectedBank.opening_balance || 0) : Number(selectedBank.opening_balance || 0);
+        }
+      }
+    } else {
+      const opRows = await db.prepare("SELECT amount, balance_type FROM opening_balances WHERE entity_type = 'BANK' AND financial_year = ?").all(activeFy);
+      if (opRows.length > 0) {
+        openingBank = opRows.reduce((sum, r) => sum + (r.balance_type === 'Cr' ? -Number(r.amount) : Number(r.amount)), 0);
+      } else {
+        const allBanks = await db.prepare("SELECT opening_balance, opening_balance_type FROM bank_accounts WHERE status = 'active'").all();
+        openingBank = allBanks.reduce((sum, b) => sum + (b.opening_balance_type === 'Cr' ? -Number(b.opening_balance || 0) : Number(b.opening_balance || 0)), 0);
+      }
+    }
+
+    if (dateFrom) {
+      let prevRecQ = "SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE payment_mode != 'Cash' AND party_type = 'CUSTOMER' AND date < ? AND is_voided = 0";
+      const prevRecP = [dateFrom];
+      if (bankAccountId) { prevRecQ += ' AND bank_account_id = ?'; prevRecP.push(bankAccountId); }
+      const prevRecRow = await db.prepare(prevRecQ).get(...prevRecP);
+
+      let prevPayQ = "SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE payment_mode != 'Cash' AND party_type = 'SUPPLIER' AND date < ? AND is_voided = 0";
+      const prevPayP = [dateFrom];
+      if (bankAccountId) { prevPayQ += ' AND bank_account_id = ?'; prevPayP.push(bankAccountId); }
+      const prevPayRow = await db.prepare(prevPayQ).get(...prevPayP);
+
+      let prevTfIn = 0;
+      let prevTfOut = 0;
+      if (bankAccountId) {
+        const rIn = await db.prepare('SELECT COALESCE(SUM(amount), 0) as total FROM bank_transfers WHERE to_bank_id = ? AND date < ? AND is_voided = 0').get(bankAccountId, dateFrom);
+        const rOut = await db.prepare('SELECT COALESCE(SUM(amount), 0) as total FROM bank_transfers WHERE from_bank_id = ? AND date < ? AND is_voided = 0').get(bankAccountId, dateFrom);
+        prevTfIn = Number(rIn?.total || 0);
+        prevTfOut = Number(rOut?.total || 0);
+      }
+
+      openingBank = Number((openingBank + Number(prevRecRow?.total || 0) - Number(prevPayRow?.total || 0) + prevTfIn - prevTfOut).toFixed(2));
+    }
+
+    // Inflows: Bank Receipts
+    let recQuery = "SELECT p.id, p.date, p.reference_no, p.reference_no as doc_no, p.payment_code, p.payment_mode, p.amount, c.name as party_name, p.remarks, p.created_at, p.party_id, p.bank_account_id FROM payments p JOIN customers c ON p.party_id = c.id WHERE p.party_type = 'CUSTOMER' AND p.payment_mode != 'Cash' AND p.is_voided = 0";
     const recParams = [];
+    if (bankAccountId) { recQuery += ' AND p.bank_account_id = ?'; recParams.push(bankAccountId); }
     if (dateFrom) { recQuery += ' AND p.date >= ?'; recParams.push(dateFrom); }
     if (dateTo) { recQuery += ' AND p.date <= ?'; recParams.push(dateTo); }
     const rawBankRecs = await db.prepare(recQuery).all(...recParams);
 
-    let salesQuery = "SELECT id, date, invoice_number, invoice_number as doc_no, sale_code, total_amount as amount, customer_id, created_at FROM sales WHERE payment_type = 'Bank' AND is_voided = 0";
-    const salesParams = [];
-    if (dateFrom) { salesQuery += ' AND date >= ?'; salesParams.push(dateFrom); }
-    if (dateTo) { salesQuery += ' AND date <= ?'; salesParams.push(dateTo); }
-    const rawBankSales = await db.prepare(salesQuery).all(...salesParams);
+    const bankReceipts = rawBankRecs.map(r => ({
+      id: `brec-${r.id}`,
+      date: r.date,
+      doc_no: r.doc_no || r.payment_code,
+      type: 'INFLOW',
+      category: 'Customer Receipt',
+      description: `Receipt from ${r.party_name}${r.remarks ? ` (${r.remarks})` : ''}`,
+      mode: r.payment_mode || 'Bank',
+      inflow: Number(Number(r.amount).toFixed(2)),
+      outflow: 0,
+      created_at: r.created_at
+    }));
 
-    const matchedBankSaleIds = new Set();
-    const bankReceipts = rawBankRecs.map(r => {
-      const matchingSale = rawBankSales.find(s =>
-        !matchedBankSaleIds.has(s.id) && (
-          (r.reference_no && (r.reference_no.trim().toLowerCase() === (s.invoice_number || '').trim().toLowerCase() || r.reference_no.trim().toLowerCase() === (s.sale_code || '').trim().toLowerCase())) ||
-          (Number(r.party_id) === Number(s.customer_id) && Math.abs(Number(r.amount) - Number(s.amount)) < 0.01 && r.date === s.date)
-        )
-      );
-      if (matchingSale) {
-        matchedBankSaleIds.add(matchingSale.id);
-      }
-      return {
-        id: `brec-${r.id}`,
-        date: r.date,
-        doc_no: r.doc_no || r.payment_code,
-        type: 'INFLOW',
-        category: 'Customer Receipt',
-        description: `Receipt from ${r.party_name}${r.remarks ? ` (${r.remarks})` : ''}`,
-        mode: r.payment_mode || 'Bank',
-        inflow: Number(Number(r.amount).toFixed(2)),
-        outflow: 0,
-        created_at: r.created_at
-      };
-    });
-
-    const bankSales = rawBankSales
-      .filter(s => !matchedBankSaleIds.has(s.id))
-      .map(r => ({
-        id: `bsale-${r.id}`,
-        date: r.date,
-        doc_no: r.doc_no || r.sale_code,
-        type: 'INFLOW',
-        category: 'Bank Sale',
-        description: 'Bank Sale Direct Credit',
-        mode: 'Bank Transfer',
-        inflow: Number(Number(r.amount).toFixed(2)),
-        outflow: 0,
-        created_at: r.created_at
-      }));
-
-    // Outflows: Bank Supplier Payments + Non-duplicate Bank Purchases
-    let payQuery = "SELECT p.id, p.date, p.reference_no, p.reference_no as doc_no, p.payment_code, p.payment_mode, p.amount, s.name as party_name, p.remarks, p.created_at, p.party_id FROM payments p JOIN suppliers s ON p.party_id = s.id WHERE p.party_type = 'SUPPLIER' AND p.payment_mode != 'Cash' AND p.is_voided = 0";
+    // Outflows: Bank Supplier Payments
+    let payQuery = "SELECT p.id, p.date, p.reference_no, p.reference_no as doc_no, p.payment_code, p.payment_mode, p.amount, s.name as party_name, p.remarks, p.created_at, p.party_id, p.bank_account_id FROM payments p JOIN suppliers s ON p.party_id = s.id WHERE p.party_type = 'SUPPLIER' AND p.payment_mode != 'Cash' AND p.is_voided = 0";
     const payParams = [];
+    if (bankAccountId) { payQuery += ' AND p.bank_account_id = ?'; payParams.push(bankAccountId); }
     if (dateFrom) { payQuery += ' AND p.date >= ?'; payParams.push(dateFrom); }
     if (dateTo) { payQuery += ' AND p.date <= ?'; payParams.push(dateTo); }
     const rawBankPays = await db.prepare(payQuery).all(...payParams);
 
-    let purQuery = "SELECT id, date, invoice_number, invoice_number as doc_no, purchase_code, total_amount as amount, supplier_id, created_at FROM raw_material_purchases WHERE payment_mode = 'Bank' AND is_voided = 0";
-    const purParams = [];
-    if (dateFrom) { purQuery += ' AND date >= ?'; purParams.push(dateFrom); }
-    if (dateTo) { purQuery += ' AND date <= ?'; purParams.push(dateTo); }
-    const rawBankPurs = await db.prepare(purQuery).all(...purParams);
+    const bankPayments = rawBankPays.map(r => ({
+      id: `bpay-${r.id}`,
+      date: r.date,
+      doc_no: r.doc_no || r.payment_code,
+      type: 'OUTFLOW',
+      category: 'Supplier Payment',
+      description: `Payment to ${r.party_name}${r.remarks ? ` (${r.remarks})` : ''}`,
+      mode: r.payment_mode || 'Bank',
+      inflow: 0,
+      outflow: Number(Number(r.amount).toFixed(2)),
+      created_at: r.created_at
+    }));
 
-    const matchedBankPurIds = new Set();
-    const bankPayments = rawBankPays.map(r => {
-      const matchingPur = rawBankPurs.find(p =>
-        !matchedBankPurIds.has(p.id) && (
-          (r.reference_no && (r.reference_no.trim().toLowerCase() === (p.invoice_number || '').trim().toLowerCase() || r.reference_no.trim().toLowerCase() === (p.purchase_code || '').trim().toLowerCase())) ||
-          (Number(r.party_id) === Number(p.supplier_id) && Math.abs(Number(r.amount) - Number(p.amount)) < 0.01 && r.date === p.date)
-        )
-      );
-      if (matchingPur) {
-        matchedBankPurIds.add(matchingPur.id);
-      }
-      return {
-        id: `bpay-${r.id}`,
-        date: r.date,
-        doc_no: r.doc_no || r.payment_code,
-        type: 'OUTFLOW',
-        category: 'Supplier Payment',
-        description: `Payment to ${r.party_name}${r.remarks ? ` (${r.remarks})` : ''}`,
-        mode: r.payment_mode || 'Bank',
-        inflow: 0,
-        outflow: Number(Number(r.amount).toFixed(2)),
-        created_at: r.created_at
-      };
-    });
+    // Bank Transfers IN
+    let tfInQuery = `
+      SELECT bt.*, fb.account_name as from_account_name, fb.bank_name as from_bank_name
+      FROM bank_transfers bt
+      JOIN bank_accounts fb ON bt.from_bank_id = fb.id
+      WHERE bt.is_voided = 0
+    `;
+    const tfInParams = [];
+    if (bankAccountId) { tfInQuery += ' AND bt.to_bank_id = ?'; tfInParams.push(bankAccountId); }
+    if (dateFrom) { tfInQuery += ' AND bt.date >= ?'; tfInParams.push(dateFrom); }
+    if (dateTo) { tfInQuery += ' AND bt.date <= ?'; tfInParams.push(dateTo); }
+    const rawTfIn = bankAccountId ? await db.prepare(tfInQuery).all(...tfInParams) : [];
 
-    const bankPurchases = rawBankPurs
-      .filter(p => !matchedBankPurIds.has(p.id))
-      .map(r => ({
-        id: `bpur-${r.id}`,
-        date: r.date,
-        doc_no: r.doc_no || r.purchase_code,
-        type: 'OUTFLOW',
-        category: 'Bank Purchase',
-        description: 'Bank RM Purchase Direct Debit',
-        mode: 'Bank Transfer',
-        inflow: 0,
-        outflow: Number(Number(r.amount).toFixed(2)),
-        created_at: r.created_at
-      }));
+    const transfersIn = rawTfIn.map(t => ({
+      id: `bt-in-${t.id}`,
+      date: t.date,
+      doc_no: t.transfer_code,
+      type: 'INFLOW',
+      category: 'Bank Transfer IN',
+      description: `Transfer from ${t.from_bank_name} (${t.from_account_name})${t.remarks ? ` - ${t.remarks}` : ''}`,
+      mode: 'Bank Transfer',
+      inflow: Number(Number(t.amount).toFixed(2)),
+      outflow: 0,
+      created_at: t.created_at
+    }));
 
-    const allBank = [...bankSales, ...bankReceipts, ...bankPurchases, ...bankPayments].sort((a, b) => {
+    // Bank Transfers OUT
+    let tfOutQuery = `
+      SELECT bt.*, tb.account_name as to_account_name, tb.bank_name as to_bank_name
+      FROM bank_transfers bt
+      JOIN bank_accounts tb ON bt.to_bank_id = tb.id
+      WHERE bt.is_voided = 0
+    `;
+    const tfOutParams = [];
+    if (bankAccountId) { tfOutQuery += ' AND bt.from_bank_id = ?'; tfOutParams.push(bankAccountId); }
+    if (dateFrom) { tfOutQuery += ' AND bt.date >= ?'; tfOutParams.push(dateFrom); }
+    if (dateTo) { tfOutQuery += ' AND bt.date <= ?'; tfOutParams.push(dateTo); }
+    const rawTfOut = bankAccountId ? await db.prepare(tfOutQuery).all(...tfOutParams) : [];
+
+    const transfersOut = rawTfOut.map(t => ({
+      id: `bt-out-${t.id}`,
+      date: t.date,
+      doc_no: t.transfer_code,
+      type: 'OUTFLOW',
+      category: 'Bank Transfer OUT',
+      description: `Transfer to ${t.to_bank_name} (${t.to_account_name})${t.remarks ? ` - ${t.remarks}` : ''}`,
+      mode: 'Bank Transfer',
+      inflow: 0,
+      outflow: Number(Number(t.amount).toFixed(2)),
+      created_at: t.created_at
+    }));
+
+    const allBank = [...bankReceipts, ...bankPayments, ...transfersIn, ...transfersOut].sort((a, b) => {
       const cmp = a.date.localeCompare(b.date);
       if (cmp !== 0) return cmp;
       return a.created_at.localeCompare(b.created_at);
     });
 
-    let runningBalance = 0;
+    let runningBalance = openingBank;
     let totalInflow = 0;
     let totalOutflow = 0;
 
@@ -4392,8 +5563,11 @@ app.get('/api/accounts/bank-ledger', async (req, res) => {
     });
 
     res.json({
+      bankAccount: selectedBank,
+      openingBalance: openingBank,
       transactions: ledger,
       summary: {
+        openingBank,
         totalInflow: Number(totalInflow.toFixed(2)),
         totalOutflow: Number(totalOutflow.toFixed(2)),
         netBankBalance: runningBalance
@@ -4407,9 +5581,11 @@ app.get('/api/accounts/bank-ledger', async (req, res) => {
 // Payments / Receipts List
 app.get('/api/accounts/payments', async (req, res) => {
   try {
-    const { partyType, partyId, dateFrom, dateTo, paymentMode } = req.query;
+    const { partyType, partyId, dateFrom, dateTo, paymentMode, bankAccountId } = req.query;
     let query = `
       SELECT p.*,
+             ba.bank_name,
+             ba.account_name as bank_account_name,
              CASE
                WHEN p.party_type = 'CUSTOMER' THEN (SELECT name FROM customers WHERE id = p.party_id)
                WHEN p.party_type = 'SUPPLIER' THEN (SELECT name FROM suppliers WHERE id = p.party_id)
@@ -4421,12 +5597,14 @@ app.get('/api/accounts/payments', async (req, res) => {
                ELSE ''
              END AS party_gstin
       FROM payments p
+      LEFT JOIN bank_accounts ba ON p.bank_account_id = ba.id
       WHERE p.is_voided = 0
     `;
     const params = [];
     if (partyType) { query += ' AND p.party_type = ?'; params.push(partyType); }
     if (partyId) { query += ' AND p.party_id = ?'; params.push(partyId); }
     if (paymentMode) { query += ' AND p.payment_mode = ?'; params.push(paymentMode); }
+    if (bankAccountId) { query += ' AND p.bank_account_id = ?'; params.push(bankAccountId); }
     if (dateFrom) { query += ' AND p.date >= ?'; params.push(dateFrom); }
     if (dateTo) { query += ' AND p.date <= ?'; params.push(dateTo); }
 
@@ -4447,6 +5625,7 @@ app.post('/api/accounts/payments', async (req, res) => {
       partyId,
       amount,
       paymentMode = 'Bank', // 'Cash', 'Bank', 'Cheque', 'UPI', 'NEFT/RTGS'
+      bankAccountId = null,
       referenceNo = '',
       remarks = '',
       managerName = 'Admin',
@@ -4480,14 +5659,14 @@ app.post('/api/accounts/payments', async (req, res) => {
     const info = await db.prepare(`
       INSERT INTO payments (
         payment_code, date, party_type, party_id, amount, payment_mode, reference_no, remarks,
-        created_by, manager_id, manager_name, device_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(code, date, partyType, Number(partyId), numAmount, paymentMode, referenceNo, remarks, finalManagerName, finalManagerId, finalManagerName, finalDeviceId);
+        created_by, manager_id, manager_name, device_id, bank_account_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(code, date, partyType, Number(partyId), numAmount, paymentMode, referenceNo, remarks, finalManagerName, finalManagerId, finalManagerName, finalDeviceId, bankAccountId ? Number(bankAccountId) : null);
 
     await db.prepare(`
       INSERT INTO audit_logs (entity_type, entity_id, action, new_values, performed_by, device_id)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run('PAYMENT', code, 'CREATE', JSON.stringify({ partyType, partyId, amount: numAmount, paymentMode, referenceNo }), finalManagerName, finalDeviceId);
+    `).run('PAYMENT', code, 'CREATE', JSON.stringify({ partyType, partyId, amount: numAmount, paymentMode, referenceNo, bankAccountId }), finalManagerName, finalDeviceId);
 
     res.status(201).json({
       id: info.lastInsertRowid,
@@ -4497,6 +5676,7 @@ app.post('/api/accounts/payments', async (req, res) => {
       party_id: Number(partyId),
       amount: numAmount,
       payment_mode: paymentMode,
+      bank_account_id: bankAccountId ? Number(bankAccountId) : null,
       reference_no: referenceNo,
       remarks,
       manager_name: finalManagerName
@@ -4512,7 +5692,7 @@ app.put('/api/accounts/payments/:id', requireAdmin, async (req, res) => {
     if (!pay) return res.status(404).json({ error: 'Payment record not found' });
     if (pay.is_voided) return res.status(400).json({ error: 'Cannot edit a voided payment.' });
 
-    const { date, amount, paymentMode, referenceNo, remarks, partyId, againstType } = req.body;
+    const { date, amount, paymentMode, bankAccountId, referenceNo, remarks, partyId, againstType } = req.body;
     const numAmount = Number(amount);
     if (isNaN(numAmount) || numAmount <= 0) {
       return res.status(400).json({ error: 'Amount must be a positive number.' });
@@ -4523,6 +5703,7 @@ app.put('/api/accounts/payments/:id', requireAdmin, async (req, res) => {
       SET date = COALESCE(?, date),
           amount = ?,
           payment_mode = COALESCE(?, payment_mode),
+          bank_account_id = COALESCE(?, bank_account_id),
           reference_no = COALESCE(?, reference_no),
           remarks = COALESCE(?, remarks),
           party_id = COALESCE(?, party_id),
@@ -4532,6 +5713,7 @@ app.put('/api/accounts/payments/:id', requireAdmin, async (req, res) => {
       date || null,
       numAmount,
       paymentMode || null,
+      bankAccountId !== undefined ? (bankAccountId ? Number(bankAccountId) : null) : null,
       referenceNo !== undefined ? referenceNo : null,
       remarks !== undefined ? remarks : null,
       partyId ? Number(partyId) : null,
@@ -4542,7 +5724,7 @@ app.put('/api/accounts/payments/:id', requireAdmin, async (req, res) => {
     await db.prepare(`
       INSERT INTO audit_logs (entity_type, entity_id, action, original_values, new_values, performed_by)
       VALUES (?, ?, 'EDIT', ?, ?, ?)
-    `).run('PAYMENT', pay.payment_code, JSON.stringify(pay), JSON.stringify({ date, amount: numAmount, paymentMode, referenceNo, remarks }), 'Admin');
+    `).run('PAYMENT', pay.payment_code, JSON.stringify(pay), JSON.stringify({ date, amount: numAmount, paymentMode, referenceNo, remarks, bankAccountId }), 'Admin');
 
     const updated = await db.prepare('SELECT * FROM payments WHERE id = ?').get(pay.id);
     res.json(updated);

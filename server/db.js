@@ -246,7 +246,93 @@ function initSchema() {
       reference_no TEXT,
       remarks TEXT,
       created_by TEXT DEFAULT 'Admin',
+      bank_account_id INTEGER,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS financial_years (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT UNIQUE NOT NULL,
+      start_date TEXT NOT NULL,
+      end_date TEXT NOT NULL,
+      is_active INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    INSERT OR IGNORE INTO financial_years (name, start_date, end_date, is_active)
+    VALUES 
+      ('FY 2025-26', '2025-04-01', '2026-03-31', 0),
+      ('FY 2026-27', '2026-04-01', '2027-03-31', 1),
+      ('FY 2027-28', '2027-04-01', '2028-03-31', 0);
+
+    CREATE TABLE IF NOT EXISTS bank_accounts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      bank_name TEXT NOT NULL,
+      account_name TEXT NOT NULL,
+      account_number TEXT NOT NULL,
+      ifsc TEXT,
+      branch TEXT,
+      opening_balance REAL DEFAULT 0,
+      opening_balance_type TEXT DEFAULT 'Dr',
+      status TEXT DEFAULT 'active',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS bank_transfers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      transfer_code TEXT UNIQUE NOT NULL,
+      date TEXT NOT NULL,
+      from_bank_id INTEGER,
+      to_bank_id INTEGER,
+      amount REAL NOT NULL,
+      reference_no TEXT,
+      remarks TEXT,
+      created_by TEXT DEFAULT 'Admin',
+      is_voided INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS opening_balances (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      financial_year TEXT NOT NULL,
+      opening_date TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_id INTEGER DEFAULT 0,
+      quantity REAL DEFAULT 0,
+      unit TEXT,
+      rate REAL DEFAULT 0,
+      amount REAL DEFAULT 0,
+      balance_type TEXT DEFAULT 'Dr',
+      gsm INTEGER,
+      size TEXT,
+      remarks TEXT,
+      created_by TEXT DEFAULT 'Admin',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (financial_year, entity_type, entity_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS debit_credit_notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      note_type TEXT NOT NULL,
+      note_code TEXT UNIQUE NOT NULL,
+      date TEXT NOT NULL,
+      party_type TEXT NOT NULL,
+      party_id INTEGER NOT NULL,
+      reference_invoice TEXT,
+      reason TEXT,
+      taxable_amount REAL DEFAULT 0,
+      gst_percent REAL DEFAULT 0,
+      cgst_amount REAL DEFAULT 0,
+      sgst_amount REAL DEFAULT 0,
+      igst_amount REAL DEFAULT 0,
+      total_amount REAL NOT NULL,
+      remarks TEXT,
+      created_by TEXT DEFAULT 'Admin',
+      is_voided INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS production_orders (

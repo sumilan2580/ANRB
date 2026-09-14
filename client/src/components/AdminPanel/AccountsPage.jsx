@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   BookOpen, CreditCard, FileText, Download, RefreshCw, Plus, Trash2, Edit2,
   AlertTriangle, ChevronRight, Printer, Filter, Users, UserCheck, X,
-  TrendingUp, TrendingDown, DollarSign
+  TrendingUp, TrendingDown, DollarSign, FileCheck, Archive
 } from 'lucide-react';
 import { api } from '../../api';
 
@@ -1200,6 +1200,605 @@ function OutstandingView({ onSelectParty }) {
   );
 }
 
+// ── DEBIT / CREDIT NOTES VIEW ─────────────────────────────────────────────────
+function DebitCreditNotesView({ customers, suppliers }) {
+  const [notes, setNotes] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [filterType, setFilterType] = useState('');
+  const [filterParty, setFilterParty] = useState('');
+  const [showModal, setShowModal] = useState(false);
+  const [editNote, setEditNote] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [form, setForm] = useState({
+    noteType: 'DEBIT_NOTE', partyType: 'CUSTOMER', partyId: '',
+    date: new Date().toISOString().split('T')[0],
+    taxableAmount: '', gstPercent: '18', referenceInvoice: '', reason: '', remarks: ''
+  });
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      let q = [];
+      if (filterType) q.push(`noteType=${filterType}`);
+      if (filterParty) q.push(`partyType=${filterParty}`);
+      const data = await api.getDebitCreditNotes(q.join('&'));
+      setNotes(data || []);
+    } catch (e) { setNotes([]); }
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, [filterType, filterParty]);
+
+  const openAdd = () => {
+    setEditNote(null);
+    setForm({ noteType: 'DEBIT_NOTE', partyType: 'CUSTOMER', partyId: '', date: new Date().toISOString().split('T')[0], taxableAmount: '', gstPercent: '18', referenceInvoice: '', reason: '', remarks: '' });
+    setFormError('');
+    setShowModal(true);
+  };
+
+  const openEdit = (n) => {
+    setEditNote(n);
+    setForm({
+      noteType: n.note_type, partyType: n.party_type, partyId: String(n.party_id),
+      date: n.date, taxableAmount: String(n.taxable_amount), gstPercent: String(n.gst_percent),
+      referenceInvoice: n.reference_invoice || '', reason: n.reason || '', remarks: n.remarks || ''
+    });
+    setFormError('');
+    setShowModal(true);
+  };
+
+  const handleSave = async (e) => {
+    e.preventDefault();
+    if (!form.partyId || !form.taxableAmount || Number(form.taxableAmount) <= 0) {
+      return setFormError('Party and taxable amount are required.');
+    }
+    setSaving(true); setFormError('');
+    try {
+      const payload = {
+        noteType: form.noteType, partyType: form.partyType, partyId: Number(form.partyId),
+        date: form.date, taxableAmount: Number(form.taxableAmount), gstPercent: Number(form.gstPercent),
+        referenceInvoice: form.referenceInvoice, reason: form.reason, remarks: form.remarks
+      };
+      if (editNote) await api.updateDebitCreditNote(editNote.id, payload);
+      else await api.createDebitCreditNote(payload);
+      setShowModal(false);
+      load();
+    } catch (err) { setFormError(err.message || 'Failed to save note'); }
+    setSaving(false);
+  };
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    try { await api.deleteDebitCreditNote(deleteTarget.id); setDeleteTarget(null); load(); } catch {}
+    setDeleting(false);
+  };
+
+  const taxable = Number(form.taxableAmount) || 0;
+  const gstPct = Number(form.gstPercent) || 0;
+  const gstAmt = Number((taxable * gstPct / 100).toFixed(2));
+  const totalAmt = Number((taxable + gstAmt).toFixed(2));
+
+  const partyList = form.partyType === 'CUSTOMER' ? customers : suppliers;
+
+  const noteTypeLabel = (t) => ({
+    DEBIT_NOTE: 'Debit Note', CREDIT_NOTE: 'Credit Note'
+  }[t] || t);
+
+  const partyTypeLabel = (p) => ({
+    CUSTOMER: 'Customer', SUPPLIER: 'Supplier'
+  }[p] || p);
+
+  const noteColor = (t) => t === 'DEBIT_NOTE' ? 'var(--rose)' : 'var(--emerald)';
+
+  return (
+    <div>
+      {/* Filters + Add */}
+      <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap' }}>
+        <select className="form-select" style={{ width: '180px' }} value={filterType} onChange={e => setFilterType(e.target.value)}>
+          <option value="">All Note Types</option>
+          <option value="DEBIT_NOTE">Debit Notes</option>
+          <option value="CREDIT_NOTE">Credit Notes</option>
+        </select>
+        <select className="form-select" style={{ width: '160px' }} value={filterParty} onChange={e => setFilterParty(e.target.value)}>
+          <option value="">All Parties</option>
+          <option value="CUSTOMER">Customers</option>
+          <option value="SUPPLIER">Suppliers</option>
+        </select>
+        <button className="btn btn-outline" onClick={load} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <RefreshCw size={13} /> Refresh
+        </button>
+        <button className="btn btn-primary" onClick={openAdd} style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <Plus size={14} /> New Note
+        </button>
+      </div>
+
+      {/* Notes Table */}
+      <div className="table-wrapper">
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Note #</th>
+              <th>Type</th>
+              <th>Party</th>
+              <th>Party Type</th>
+              <th>Reference Invoice</th>
+              <th>Reason</th>
+              <th style={{ textAlign: 'right' }}>Taxable ₹</th>
+              <th style={{ textAlign: 'right' }}>GST %</th>
+              <th style={{ textAlign: 'right' }}>Total ₹</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={11} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-dim)' }}>Loading…</td></tr>
+            ) : notes.length === 0 ? (
+              <tr><td colSpan={11} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-dim)' }}>No debit/credit notes found.</td></tr>
+            ) : notes.map(n => (
+              <tr key={n.id}>
+                <td>{n.date}</td>
+                <td><strong style={{ color: noteColor(n.note_type) }}>{n.note_code}</strong></td>
+                <td><span style={{ fontSize: '11px', fontWeight: '600', padding: '2px 8px', borderRadius: '10px', background: n.note_type === 'DEBIT_NOTE' ? 'rgba(239,68,68,0.12)' : 'rgba(16,185,129,0.12)', color: noteColor(n.note_type) }}>{noteTypeLabel(n.note_type)}</span></td>
+                <td>{n.party_name || '—'}</td>
+                <td style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{partyTypeLabel(n.party_type)}</td>
+                <td style={{ fontSize: '12px' }}>{n.reference_invoice || '—'}</td>
+                <td style={{ fontSize: '12px', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.reason || '—'}</td>
+                <td className="num-mono" style={{ textAlign: 'right' }}>{fmtINR(n.taxable_amount)}</td>
+                <td className="num-mono" style={{ textAlign: 'right' }}>{n.gst_percent}%</td>
+                <td className="num-mono" style={{ textAlign: 'right', fontWeight: '700', color: noteColor(n.note_type) }}>{fmtINR(n.total_amount)}</td>
+                <td>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <ActionBtn icon={<Edit2 size={12} />} color="var(--primary)" title="Edit" onClick={() => openEdit(n)} />
+                    <ActionBtn icon={<Trash2 size={12} />} color="var(--rose)" title="Delete" onClick={() => setDeleteTarget(n)} />
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Add/Edit Modal */}
+      {showModal && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '520px' }}>
+            <div className="modal-header">
+              <h3>{editNote ? `Edit Note (${editNote.note_code})` : '+ New Debit / Credit Note'}</h3>
+              <button className="modal-close-btn" onClick={() => setShowModal(false)}>×</button>
+            </div>
+            <form onSubmit={handleSave}>
+              <div className="modal-body">
+                {formError && <div style={{ padding: '10px', background: 'rgba(239,68,68,0.1)', color: 'var(--rose)', border: '1px solid var(--rose)', borderRadius: '6px', marginBottom: '12px', fontSize: '12.5px' }}>{formError}</div>}
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label className="form-label">Date *</label>
+                    <input type="date" className="form-input" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} required />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Note Type *</label>
+                    <select className="form-select" value={form.noteType} onChange={e => setForm({ ...form, noteType: e.target.value })}>
+                      <option value="DEBIT_NOTE">Debit Note</option>
+                      <option value="CREDIT_NOTE">Credit Note</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Party Type *</label>
+                    <select className="form-select" value={form.partyType} onChange={e => setForm({ ...form, partyType: e.target.value, partyId: '' })}>
+                      <option value="CUSTOMER">Customer</option>
+                      <option value="SUPPLIER">Supplier</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">{form.partyType === 'CUSTOMER' ? 'Customer' : 'Supplier'} *</label>
+                    <select className="form-select" value={form.partyId} onChange={e => setForm({ ...form, partyId: e.target.value })} required>
+                      <option value="">Select party…</option>
+                      {partyList.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Taxable Amount (₹) *</label>
+                    <input type="number" className="form-input" value={form.taxableAmount} onChange={e => setForm({ ...form, taxableAmount: e.target.value })} placeholder="e.g. 10000" required min="0.01" step="0.01" />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">GST % *</label>
+                    <select className="form-select" value={form.gstPercent} onChange={e => setForm({ ...form, gstPercent: e.target.value })}>
+                      <option value="0">0% (Exempt)</option>
+                      <option value="5">5%</option>
+                      <option value="12">12%</option>
+                      <option value="18">18%</option>
+                      <option value="28">28%</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Reference Invoice</label>
+                    <input type="text" className="form-input" value={form.referenceInvoice} onChange={e => setForm({ ...form, referenceInvoice: e.target.value })} placeholder="e.g. INV-2026-000012" />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Reason</label>
+                    <input type="text" className="form-input" value={form.reason} onChange={e => setForm({ ...form, reason: e.target.value })} placeholder="e.g. Goods returned, Rate difference…" />
+                  </div>
+                  <div className="form-group full-width">
+                    <label className="form-label">Remarks</label>
+                    <input type="text" className="form-input" value={form.remarks} onChange={e => setForm({ ...form, remarks: e.target.value })} placeholder="Internal remarks" />
+                  </div>
+                </div>
+                {/* GST Preview */}
+                {taxable > 0 && (
+                  <div style={{ marginTop: '12px', padding: '12px', background: 'var(--bg-alt)', borderRadius: '8px', border: '1px solid var(--border-color)', display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Taxable</div>
+                      <div style={{ fontWeight: '700', fontSize: '16px' }}>{fmtINR(taxable)}</div>
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>GST ({gstPct}%)</div>
+                      <div style={{ fontWeight: '700', fontSize: '16px', color: 'var(--amber)' }}>{fmtINR(gstAmt)}</div>
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total Amount</div>
+                      <div style={{ fontWeight: '700', fontSize: '18px', color: form.noteType === 'DEBIT_NOTE' ? 'var(--rose)' : 'var(--emerald)' }}>{fmtINR(totalAmt)}</div>
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-outline" onClick={() => setShowModal(false)} disabled={saving}>Cancel</button>
+                <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : editNote ? 'Update Note' : 'Create Note'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirm */}
+      {deleteTarget && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '380px' }}>
+            <div className="modal-header">
+              <h3 style={{ color: 'var(--rose)', display: 'flex', alignItems: 'center', gap: '8px' }}><AlertTriangle size={18} /> Confirm Delete</h3>
+              <button className="modal-close-btn" onClick={() => setDeleteTarget(null)}>×</button>
+            </div>
+            <div className="modal-body">
+              <p style={{ color: 'var(--text-muted)', lineHeight: '1.6' }}>Delete note <strong style={{ color: 'var(--text-main)' }}>{deleteTarget.note_code}</strong>? This will affect the party ledger balance.</p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>Cancel</button>
+              <button className="btn" style={{ background: 'var(--rose)', color: '#fff' }} onClick={handleDelete} disabled={deleting}>{deleting ? 'Deleting…' : 'Delete'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── OPENING BALANCES VIEW ─────────────────────────────────────────────────────
+function OpeningBalancesView({ customers, suppliers }) {
+  const [balances, setBalances] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [filterType, setFilterType] = useState('');
+  const [showModal, setShowModal] = useState(false);
+  const [editBal, setEditBal] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [rawMaterials, setRawMaterials] = useState([]);
+  const [finishedGoods, setFinishedGoods] = useState([]);
+  const [bankAccounts, setBankAccounts] = useState([]);
+  const [financialYears, setFinancialYears] = useState([]);
+  const [cfLoading, setCfLoading] = useState(false);
+  const [cfMsg, setCfMsg] = useState('');
+  const [form, setForm] = useState({
+    financialYear: '', entityType: 'CUSTOMER', entityId: '',
+    openingDate: new Date().toISOString().split('T')[0],
+    amount: '', balanceType: 'Dr', quantity: '', unit: 'KG', rate: '', remarks: ''
+  });
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const q = filterType ? `entityType=${filterType}` : '';
+      const data = await api.getOpeningBalances(q);
+      setBalances(data || []);
+    } catch { setBalances([]); }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    load();
+    api.getRawMaterials && api.getRawMaterials().then(setRawMaterials).catch(() => {});
+    api.getFinishedGoods && api.getFinishedGoods().then(setFinishedGoods).catch(() => {});
+    api.getBankAccounts && api.getBankAccounts().then(setBankAccounts).catch(() => {});
+    api.getFinancialYears && api.getFinancialYears().then(setFinancialYears).catch(() => {});
+  }, [filterType]);
+
+  const entityOptions = () => {
+    switch (form.entityType) {
+      case 'CUSTOMER': return customers;
+      case 'SUPPLIER': return suppliers;
+      case 'RAW_MATERIAL': case 'RM': return rawMaterials;
+      case 'FINISHED_GOOD': case 'FG': return finishedGoods;
+      case 'BANK': return bankAccounts.map(b => ({ id: b.id, name: b.account_name || b.bank_name }));
+      default: return [];
+    }
+  };
+
+  const isStock = ['RAW_MATERIAL', 'RM', 'FINISHED_GOOD', 'FG'].includes(form.entityType);
+  const isCash = form.entityType === 'CASH';
+  const needsParty = !isCash;
+
+  const openAdd = () => {
+    setEditBal(null);
+    setForm({ financialYear: financialYears.find(f => f.is_active)?.name || '', entityType: 'CUSTOMER', entityId: '', openingDate: new Date().toISOString().split('T')[0], amount: '', balanceType: 'Dr', quantity: '', unit: 'KG', rate: '', remarks: '' });
+    setFormError('');
+    setShowModal(true);
+  };
+
+  const openEdit = (b) => {
+    setEditBal(b);
+    setForm({
+      financialYear: b.financial_year, entityType: b.entity_type,
+      entityId: String(b.entity_id || ''), openingDate: b.opening_date,
+      amount: String(b.amount || ''), balanceType: b.balance_type || 'Dr',
+      quantity: String(b.quantity || ''), unit: b.unit || 'KG', rate: String(b.rate || ''), remarks: b.remarks || ''
+    });
+    setFormError('');
+    setShowModal(true);
+  };
+
+  const handleSave = async (e) => {
+    e.preventDefault();
+    if (!form.financialYear) return setFormError('Financial Year is required.');
+    if (needsParty && !form.entityId) return setFormError('Entity is required.');
+    setSaving(true); setFormError('');
+    try {
+      const payload = {
+        financialYear: form.financialYear, entityType: form.entityType,
+        entityId: isCash ? 0 : Number(form.entityId),
+        openingDate: form.openingDate, amount: Number(form.amount) || 0,
+        balanceType: form.balanceType,
+        ...(isStock ? { quantity: Number(form.quantity), unit: form.unit, rate: Number(form.rate) || 0 } : {}),
+        remarks: form.remarks
+      };
+      if (editBal) await api.updateOpeningBalance(editBal.id, payload);
+      else await api.createOpeningBalance(payload);
+      setShowModal(false);
+      load();
+    } catch (err) { setFormError(err.message || 'Failed to save opening balance'); }
+    setSaving(false);
+  };
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    try { await api.deleteOpeningBalance(deleteTarget.id); setDeleteTarget(null); load(); } catch {}
+    setDeleting(false);
+  };
+
+  const handleCarryForward = async () => {
+    const srcFy = financialYears.find(f => f.is_active);
+    if (!srcFy) { setCfMsg('No active Financial Year found.'); return; }
+    const allFys = financialYears.filter(f => !f.is_active);
+    const targetName = prompt(`Carry-forward from: ${srcFy.name}\nEnter Target Financial Year name (e.g. FY 2027-28):`);
+    if (!targetName) return;
+    const openingDate = prompt('Enter Opening Date for new FY (YYYY-MM-DD):', `${new Date().getFullYear() + 1}-04-01`);
+    if (!openingDate) return;
+    setCfLoading(true); setCfMsg('');
+    try {
+      const result = await api.carryForwardFinancialYear({ sourceYear: srcFy.name, targetYear: targetName.trim(), openingDate });
+      setCfMsg(`✓ ${result.message} Customers: ${result.results?.customers}, Suppliers: ${result.results?.suppliers}, RM: ${result.results?.rawMaterials}, FG: ${result.results?.finishedGoods}`);
+      load();
+    } catch (err) { setCfMsg(`✗ ${err.message}`); }
+    setCfLoading(false);
+  };
+
+  const etLabel = (t) => ({ CUSTOMER: 'Customer', SUPPLIER: 'Supplier', RAW_MATERIAL: 'Raw Material', RM: 'Raw Material', FINISHED_GOOD: 'Finished Good', FG: 'Finished Good', CASH: 'Cash', BANK: 'Bank' }[t] || t);
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap' }}>
+        <select className="form-select" style={{ width: '200px' }} value={filterType} onChange={e => setFilterType(e.target.value)}>
+          <option value="">All Entity Types</option>
+          <option value="CUSTOMER">Customers</option>
+          <option value="SUPPLIER">Suppliers</option>
+          <option value="RAW_MATERIAL">Raw Materials</option>
+          <option value="FINISHED_GOOD">Finished Goods</option>
+          <option value="CASH">Cash</option>
+          <option value="BANK">Bank</option>
+        </select>
+        <button className="btn btn-outline" onClick={load} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <RefreshCw size={13} /> Refresh
+        </button>
+        <button
+          className="btn btn-outline"
+          onClick={handleCarryForward}
+          disabled={cfLoading}
+          style={{ display: 'flex', alignItems: 'center', gap: '6px', borderColor: 'var(--amber)', color: 'var(--amber)' }}
+        >
+          <ChevronRight size={14} /> {cfLoading ? 'Processing…' : 'FY Carry Forward'}
+        </button>
+        <button className="btn btn-primary" onClick={openAdd} style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <Plus size={14} /> Add Opening Balance
+        </button>
+      </div>
+
+      {cfMsg && (
+        <div style={{ padding: '10px 14px', marginBottom: '14px', borderRadius: '8px', background: cfMsg.startsWith('✓') ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: cfMsg.startsWith('✓') ? 'var(--emerald)' : 'var(--rose)', border: `1px solid ${cfMsg.startsWith('✓') ? 'var(--emerald)' : 'var(--rose)'}`, fontSize: '13px' }}>
+          {cfMsg}
+        </div>
+      )}
+
+      <div className="table-wrapper">
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>FY</th>
+              <th>Opening Date</th>
+              <th>Type</th>
+              <th>Entity</th>
+              <th style={{ textAlign: 'right' }}>Qty</th>
+              <th>Unit</th>
+              <th style={{ textAlign: 'right' }}>Amount ₹</th>
+              <th>Dr/Cr</th>
+              <th>Remarks</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={10} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-dim)' }}>Loading…</td></tr>
+            ) : balances.length === 0 ? (
+              <tr><td colSpan={10} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-dim)' }}>No opening balances found.</td></tr>
+            ) : balances.map(b => (
+              <tr key={b.id}>
+                <td style={{ fontSize: '12px', fontWeight: '600', color: 'var(--primary)' }}>{b.financial_year}</td>
+                <td>{b.opening_date}</td>
+                <td><span style={{ fontSize: '11px', padding: '2px 7px', borderRadius: '10px', background: 'var(--bg-alt)', color: 'var(--text-muted)', fontWeight: '500' }}>{etLabel(b.entity_type)}</span></td>
+                <td>{b.entity_name || (b.entity_type === 'CASH' ? 'Cash in Hand' : `ID: ${b.entity_id}`)}</td>
+                <td className="num-mono" style={{ textAlign: 'right' }}>{b.quantity ? Number(b.quantity).toLocaleString('en-IN') : '—'}</td>
+                <td style={{ fontSize: '12px' }}>{b.unit || '—'}</td>
+                <td className="num-mono" style={{ textAlign: 'right' }}>{b.amount ? fmtINR(b.amount) : '—'}</td>
+                <td>
+                  <span style={{ fontSize: '12px', fontWeight: '700', color: b.balance_type === 'Dr' ? 'var(--rose)' : 'var(--emerald)' }}>
+                    {b.balance_type}
+                  </span>
+                </td>
+                <td style={{ fontSize: '12px', color: 'var(--text-muted)', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.remarks || '—'}</td>
+                <td>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <ActionBtn icon={<Edit2 size={12} />} color="var(--primary)" title="Edit" onClick={() => openEdit(b)} />
+                    <ActionBtn icon={<Trash2 size={12} />} color="var(--rose)" title="Delete" onClick={() => setDeleteTarget(b)} />
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Add/Edit Modal */}
+      {showModal && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '520px' }}>
+            <div className="modal-header">
+              <h3>{editBal ? 'Edit Opening Balance' : '+ Add Opening Balance'}</h3>
+              <button className="modal-close-btn" onClick={() => setShowModal(false)}>×</button>
+            </div>
+            <form onSubmit={handleSave}>
+              <div className="modal-body">
+                {formError && <div style={{ padding: '10px', background: 'rgba(239,68,68,0.1)', color: 'var(--rose)', border: '1px solid var(--rose)', borderRadius: '6px', marginBottom: '12px', fontSize: '12.5px' }}>{formError}</div>}
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label className="form-label">Financial Year *</label>
+                    {financialYears.length > 0 ? (
+                      <select className="form-select" value={form.financialYear} onChange={e => setForm({ ...form, financialYear: e.target.value })} required>
+                        <option value="">Select FY…</option>
+                        {financialYears.map(fy => <option key={fy.name} value={fy.name}>{fy.name}{fy.is_active ? ' (Active)' : ''}</option>)}
+                      </select>
+                    ) : (
+                      <input type="text" className="form-input" value={form.financialYear} onChange={e => setForm({ ...form, financialYear: e.target.value })} placeholder="e.g. FY 2026-27" required />
+                    )}
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Opening Date *</label>
+                    <input type="date" className="form-input" value={form.openingDate} onChange={e => setForm({ ...form, openingDate: e.target.value })} required />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Entity Type *</label>
+                    <select className="form-select" value={form.entityType} onChange={e => setForm({ ...form, entityType: e.target.value, entityId: '' })}>
+                      <option value="CUSTOMER">Customer</option>
+                      <option value="SUPPLIER">Supplier</option>
+                      <option value="RAW_MATERIAL">Raw Material (Stock)</option>
+                      <option value="FINISHED_GOOD">Finished Good (Stock)</option>
+                      <option value="CASH">Cash in Hand</option>
+                      <option value="BANK">Bank Account</option>
+                    </select>
+                  </div>
+                  {needsParty && (
+                    <div className="form-group">
+                      <label className="form-label">{etLabel(form.entityType)} *</label>
+                      <select className="form-select" value={form.entityId} onChange={e => setForm({ ...form, entityId: e.target.value })} required>
+                        <option value="">Select…</option>
+                        {entityOptions().map(p => <option key={p.id} value={p.id}>{p.name || p.account_name}</option>)}
+                      </select>
+                    </div>
+                  )}
+                  {isStock && (
+                    <>
+                      <div className="form-group">
+                        <label className="form-label">Quantity *</label>
+                        <input type="number" className="form-input" value={form.quantity} onChange={e => setForm({ ...form, quantity: e.target.value })} placeholder="e.g. 5000" min="0" step="0.001" />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Unit</label>
+                        <select className="form-select" value={form.unit} onChange={e => setForm({ ...form, unit: e.target.value })}>
+                          <option value="KG">KG</option>
+                          <option value="MT">MT</option>
+                          <option value="PCS">PCS</option>
+                          <option value="ROLLS">ROLLS</option>
+                        </select>
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Rate per Unit (₹)</label>
+                        <input type="number" className="form-input" value={form.rate} onChange={e => setForm({ ...form, rate: e.target.value })} placeholder="e.g. 100" min="0" step="0.01" />
+                      </div>
+                    </>
+                  )}
+                  {!isStock && (
+                    <>
+                      <div className="form-group">
+                        <label className="form-label">Amount (₹) *</label>
+                        <input type="number" className="form-input" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} placeholder="e.g. 150000" min="0" step="0.01" required />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">Balance Type *</label>
+                        <select className="form-select" value={form.balanceType} onChange={e => setForm({ ...form, balanceType: e.target.value })}>
+                          <option value="Dr">Dr (Debit)</option>
+                          <option value="Cr">Cr (Credit)</option>
+                        </select>
+                      </div>
+                    </>
+                  )}
+                  <div className="form-group full-width">
+                    <label className="form-label">Remarks</label>
+                    <input type="text" className="form-input" value={form.remarks} onChange={e => setForm({ ...form, remarks: e.target.value })} placeholder="e.g. Opening as per audit report" />
+                  </div>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-outline" onClick={() => setShowModal(false)} disabled={saving}>Cancel</button>
+                <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : editBal ? 'Update' : 'Add Opening Balance'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirm */}
+      {deleteTarget && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '380px' }}>
+            <div className="modal-header">
+              <h3 style={{ color: 'var(--rose)', display: 'flex', alignItems: 'center', gap: '8px' }}><AlertTriangle size={18} /> Confirm Delete</h3>
+              <button className="modal-close-btn" onClick={() => setDeleteTarget(null)}>×</button>
+            </div>
+            <div className="modal-body">
+              <p style={{ color: 'var(--text-muted)', lineHeight: '1.6' }}>Delete this opening balance entry for <strong style={{ color: 'var(--text-main)' }}>{deleteTarget.financial_year}</strong>? Stock/balance movements will be reversed.</p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>Cancel</button>
+              <button className="btn" style={{ background: 'var(--rose)', color: '#fff' }} onClick={handleDelete} disabled={deleting}>{deleting ? 'Deleting…' : 'Delete'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── MAIN ACCOUNTS PAGE ────────────────────────────────────────────────────────
 const TABS = [
   { id: 'customer-ledger', label: 'Customer Ledger', icon: <Users size={14} /> },
@@ -1207,6 +1806,8 @@ const TABS = [
   { id: 'cash-bank', label: 'Cash & Bank Books', icon: <DollarSign size={14} /> },
   { id: 'outstanding', label: 'Outstanding Summaries', icon: <TrendingUp size={14} /> },
   { id: 'payments', label: 'Payments Register', icon: <CreditCard size={14} /> },
+  { id: 'debit-credit-notes', label: 'Debit / Credit Notes', icon: <FileCheck size={14} /> },
+  { id: 'opening-balances', label: 'Opening Balances', icon: <Archive size={14} /> },
   { id: 'export', label: 'Export / CA Tools', icon: <Download size={14} /> },
 ];
 
@@ -1302,6 +1903,12 @@ export default function AccountsPage() {
           onEditPayment={openEditPayment}
           refreshKey={paymentsRefreshKey}
         />
+      )}
+      {tab === 'debit-credit-notes' && (
+        <DebitCreditNotesView customers={customers} suppliers={suppliers} />
+      )}
+      {tab === 'opening-balances' && (
+        <OpeningBalancesView customers={customers} suppliers={suppliers} />
       )}
       {tab === 'export' && <ExportPage />}
 

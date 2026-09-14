@@ -37,7 +37,7 @@ function getPool() {
   return new Pool({
     connectionString,
     ssl: isSsl ? { rejectUnauthorized: false } : false,
-    connectionTimeoutMillis: 10000
+    connectionTimeoutMillis: 30000
   });
 }
 

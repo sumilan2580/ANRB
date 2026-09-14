@@ -165,32 +165,37 @@ export const api = {
   getAuditLogs: () => request('/audit-logs'),
 
   // Accounts & Ledgers
-  getCustomerLedger: (customerId, dateFrom, dateTo) => {
+  getCustomerLedger: (customerId, dateFrom, dateTo, financialYear) => {
     const p = new URLSearchParams({ customerId });
     if (dateFrom) p.append('dateFrom', dateFrom);
     if (dateTo) p.append('dateTo', dateTo);
+    if (financialYear) p.append('financialYear', financialYear);
     return request(`/accounts/customer-ledger?${p}`);
   },
-  getSupplierLedger: (supplierId, dateFrom, dateTo) => {
+  getSupplierLedger: (supplierId, dateFrom, dateTo, financialYear) => {
     const p = new URLSearchParams({ supplierId });
     if (dateFrom) p.append('dateFrom', dateFrom);
     if (dateTo) p.append('dateTo', dateTo);
+    if (financialYear) p.append('financialYear', financialYear);
     return request(`/accounts/supplier-ledger?${p}`);
   },
-  getCashLedger: (dateFrom, dateTo) => {
+  getCashLedger: (dateFrom, dateTo, financialYear) => {
     const p = new URLSearchParams();
     if (dateFrom) p.append('dateFrom', dateFrom);
     if (dateTo) p.append('dateTo', dateTo);
+    if (financialYear) p.append('financialYear', financialYear);
     return request(`/accounts/cash-ledger?${p}`);
   },
-  getBankLedger: (dateFrom, dateTo) => {
+  getBankLedger: (dateFrom, dateTo, bankAccountId, financialYear) => {
     const p = new URLSearchParams();
     if (dateFrom) p.append('dateFrom', dateFrom);
     if (dateTo) p.append('dateTo', dateTo);
+    if (bankAccountId) p.append('bankAccountId', bankAccountId);
+    if (financialYear) p.append('financialYear', financialYear);
     return request(`/accounts/bank-ledger?${p}`);
   },
-  getCustomerOutstanding: () => request('/accounts/customer-outstanding'),
-  getSupplierOutstanding: () => request('/accounts/supplier-outstanding'),
+  getCustomerOutstanding: (financialYear) => request(`/accounts/customer-outstanding${financialYear ? `?financialYear=${financialYear}` : ''}`),
+  getSupplierOutstanding: (financialYear) => request(`/accounts/supplier-outstanding${financialYear ? `?financialYear=${financialYear}` : ''}`),
   getPayments: (params = '') => request(`/accounts/payments${params ? `?${params}` : ''}`),
   createPayment: (data) => request('/accounts/payments', { method: 'POST', body: JSON.stringify(data) }),
   updatePayment: (id, data) => request(`/accounts/payments/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
@@ -205,4 +210,33 @@ export const api = {
     if (partyId) p.append('partyId', partyId);
     return request(`/accounts/export?${p}`);
   },
+
+  // Financial Years
+  getFinancialYears: () => request('/financial-years'),
+  createFinancialYear: (data) => request('/financial-years', { method: 'POST', body: JSON.stringify(data) }),
+  setActiveFinancialYear: (name) => request('/financial-years/active', { method: 'PUT', body: JSON.stringify({ name }) }),
+
+  // Bank Master
+  getBankAccounts: () => request('/masters/bank-accounts'),
+  createBankAccount: (data) => request('/masters/bank-accounts', { method: 'POST', body: JSON.stringify(data) }),
+  updateBankAccount: (id, data) => request(`/masters/bank-accounts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteBankAccount: (id) => request(`/masters/bank-accounts/${id}`, { method: 'DELETE' }),
+
+  // Bank Transfers
+  getBankTransfers: (params = '') => request(`/accounts/bank-transfers${params ? `?${params}` : ''}`),
+  createBankTransfer: (data) => request('/accounts/bank-transfers', { method: 'POST', body: JSON.stringify(data) }),
+  deleteBankTransfer: (id) => request(`/accounts/bank-transfers/${id}`, { method: 'DELETE' }),
+
+  // Opening Balances
+  getOpeningBalances: (params = '') => request(`/accounts/opening-balances${params ? `?${params}` : ''}`),
+  createOpeningBalance: (data) => request('/accounts/opening-balances', { method: 'POST', body: JSON.stringify(data) }),
+  updateOpeningBalance: (id, data) => request(`/accounts/opening-balances/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteOpeningBalance: (id) => request(`/accounts/opening-balances/${id}`, { method: 'DELETE' }),
+  carryForwardFinancialYear: (data) => request('/accounts/carry-forward', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Debit / Credit Notes
+  getDebitCreditNotes: (params = '') => request(`/accounts/debit-credit-notes${params ? `?${params}` : ''}`),
+  createDebitCreditNote: (data) => request('/accounts/debit-credit-notes', { method: 'POST', body: JSON.stringify(data) }),
+  updateDebitCreditNote: (id, data) => request(`/accounts/debit-credit-notes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteDebitCreditNote: (id) => request(`/accounts/debit-credit-notes/${id}`, { method: 'DELETE' }),
 };

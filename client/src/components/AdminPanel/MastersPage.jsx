@@ -179,6 +179,7 @@ export default function MastersPage() {
   const [machines, setMachines]           = useState([]);
   const [shifts, setShifts]               = useState([]);
   const [managers, setManagers]           = useState([]);
+  const [bankAccounts, setBankAccounts]   = useState([]);
   const [managerUsers, setManagerUsers]   = useState([]);
   const [showUserModal, setShowUserModal] = useState(false);
   const [newUserData, setNewUserData]     = useState({ username: '', password: '', display_name: '', phone: '' });
@@ -218,7 +219,7 @@ export default function MastersPage() {
   async function loadAll() {
     setLoading(true);
     try {
-      const [rm, fg, cust, supp, mach, sh, mgrs, comp, mgrUsers] = await Promise.all([
+      const [rm, fg, cust, supp, mach, sh, mgrs, banks, comp, mgrUsers] = await Promise.all([
         api.getRawMaterials(),
         api.getFinishedGoods(),
         api.getCustomers(),
@@ -226,6 +227,7 @@ export default function MastersPage() {
         api.getMachines(),
         api.getShifts(),
         api.getManagers(),
+        api.getBankAccounts().catch(() => []),
         api.getCompanySettings().catch(() => ({})),
         api.getManagerUsers().catch(() => [])
       ]);
@@ -236,6 +238,7 @@ export default function MastersPage() {
       setMachines(mach);
       setShifts(sh);
       setManagers(mgrs);
+      setBankAccounts(banks || []);
       setManagerUsers(mgrUsers || []);
       if (comp) {
         setCompanySettings(prev => ({ ...prev, ...comp }));
@@ -378,6 +381,7 @@ export default function MastersPage() {
       else if (tab === 'machines')       await api.updateMachine(editRecord.id, data);
       else if (tab === 'shifts')         await api.updateShift(editRecord.id, data);
       else if (tab === 'managers')       await api.updateManager(editRecord.id, data);
+      else if (tab === 'banks')          await api.updateBankAccount(editRecord.id, data);
       showSuccess('Record updated successfully!');
     } else {
       if (tab === 'raw-materials')  await api.createRawMaterial(data);
@@ -387,6 +391,7 @@ export default function MastersPage() {
       else if (tab === 'machines')       await api.createMachine(data);
       else if (tab === 'shifts')         await api.createShift(data);
       else if (tab === 'managers')       await api.createManager(data);
+      else if (tab === 'banks')          await api.createBankAccount(data);
       showSuccess('Record added successfully!');
     }
     await loadAll();
@@ -406,6 +411,7 @@ export default function MastersPage() {
       else if (tab === 'machines')       await api.deleteMachine(id);
       else if (tab === 'shifts')         await api.deleteShift(id);
       else if (tab === 'managers')       await api.deleteManager(id);
+      else if (tab === 'banks')          await api.deleteBankAccount(id);
       setDeleteTarget(null);
       await loadAll();
       showSuccess('Record deleted (or deactivated) successfully!');
@@ -422,10 +428,28 @@ export default function MastersPage() {
     { id: 'finished-goods', label: 'Finished Goods', icon: <Package size={14} />, count: finishedGoods.length },
     { id: 'customers', label: 'Customers', icon: <Users size={14} />, count: customers.length },
     { id: 'suppliers', label: 'Suppliers', icon: <UserCheck size={14} />, count: suppliers.length },
+    { id: 'banks', label: 'Bank Master', icon: <Building2 size={14} />, count: bankAccounts.length },
     { id: 'machines', label: 'Machines', icon: <Cpu size={14} />, count: machines.length },
     { id: 'shifts', label: 'Shifts', icon: <Clock size={14} />, count: shifts.length },
     { id: 'managers', label: 'Managers', icon: <Users size={14} />, count: managers.length + managerUsers.length },
     { id: 'company', label: 'Company & Tax Settings', icon: <Building2 size={14} /> },
+  ];
+
+  const bankFields = [
+    { key: 'bankName', label: 'Bank Name *', placeholder: 'e.g. State Bank of India', required: true },
+    { key: 'accountName', label: 'Account Holder Name *', placeholder: 'e.g. Tripal Mfg Private Limited', required: true },
+    { key: 'accountNumber', label: 'Account Number *', placeholder: 'e.g. 38492019284', required: true },
+    { key: 'ifsc', label: 'IFSC Code *', placeholder: 'e.g. SBIN0001234', required: true },
+    { key: 'branch', label: 'Branch Name', placeholder: 'e.g. Main Branch, Halol' },
+    { key: 'openingBalance', label: 'Opening Balance (₹)', type: 'number', defaultValue: '0', placeholder: '0.00' },
+    { key: 'openingBalanceType', label: 'Opening Type', type: 'select', defaultValue: 'Dr', options: [
+      { value: 'Dr', label: 'Debit (Dr) — Positive Balance' },
+      { value: 'Cr', label: 'Credit (Cr) — Overdraft' }
+    ]},
+    { key: 'status', label: 'Status', type: 'select', defaultValue: 'active', options: [
+      { value: 'active', label: 'Active' },
+      { value: 'inactive', label: 'Inactive' }
+    ]}
   ];
 
   const rmFields = [
@@ -524,6 +548,7 @@ export default function MastersPage() {
     if (tab === 'finished-goods') return fgFields;
     if (tab === 'customers')      return custFields;
     if (tab === 'suppliers')      return suppFields;
+    if (tab === 'banks')          return bankFields;
     if (tab === 'machines')       return machFields;
     if (tab === 'shifts')         return shiftFields;
     if (tab === 'managers')       return mgrFields;
@@ -733,6 +758,56 @@ export default function MastersPage() {
                       </button>
                       <ActionBtn icon={<Edit2 size={12} />} color="var(--primary)" title="Edit" onClick={() => openEdit({ ...s, ...editFieldMap(s) })} />
                       <ActionBtn icon={<Trash2 size={12} />} color="var(--rose)" title="Delete" onClick={() => confirmDelete(s.id, s.name)} />
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : tab === 'banks' ? (
+          <table className="custom-table">
+            <thead>
+              <tr>
+                <th>Bank Name</th>
+                <th>Account Holder Name</th>
+                <th>Account Number</th>
+                <th>IFSC</th>
+                <th>Branch</th>
+                <th style={{ textAlign: 'right' }}>Opening Balance ₹</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bankAccounts.length === 0 ? (
+                <tr><td colSpan="8" style={{ textAlign: 'center', padding: '30px', color: 'var(--text-muted)' }}>No bank accounts configured</td></tr>
+              ) : bankAccounts.map(b => (
+                <tr key={b.id}>
+                  <td style={{ fontWeight: '600', color: '#38bdf8' }}>{b.bank_name}</td>
+                  <td style={{ fontWeight: '500' }}>{b.account_name}</td>
+                  <td><span className="pill pill-indigo num-mono" style={{ fontSize: '11px' }}>{b.account_number}</span></td>
+                  <td><span className="pill pill-cyan num-mono" style={{ fontSize: '11px' }}>{b.ifsc}</span></td>
+                  <td style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{b.branch || '—'}</td>
+                  <td className="num-mono" style={{ textAlign: 'right', fontWeight: '700' }}>
+                    ₹{Number(b.opening_balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })} {b.opening_balance_type || 'Dr'}
+                  </td>
+                  <td>
+                    <span className={`pill ${b.status === 'active' ? 'pill-emerald' : 'pill-rose'}`}>{b.status}</span>
+                  </td>
+                  <td>
+                    <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                      <ActionBtn icon={<Edit2 size={12} />} color="var(--primary)" title="Edit" onClick={() => openEdit({
+                        id: b.id,
+                        bankName: b.bank_name,
+                        accountName: b.account_name,
+                        accountNumber: b.account_number,
+                        ifsc: b.ifsc,
+                        branch: b.branch,
+                        openingBalance: b.opening_balance,
+                        openingBalanceType: b.opening_balance_type,
+                        status: b.status
+                      })} />
+                      <ActionBtn icon={<Trash2 size={12} />} color="var(--rose)" title="Delete" onClick={() => confirmDelete(b.id, `${b.bank_name} (${b.account_number})`)} />
                     </div>
                   </td>
                 </tr>
