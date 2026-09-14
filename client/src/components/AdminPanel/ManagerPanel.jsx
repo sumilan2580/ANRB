@@ -673,7 +673,11 @@ function LedgerView({ onViewInvoice }) {
     setError('');
     const fetcher = type === 'CUSTOMER' ? api.getCustomers() : api.getSuppliers();
     fetcher
-      .then(res => setParties(res || []))
+      .then(res => {
+        const list = res || [];
+        setParties(list);
+        if (list.length > 0) setPartyId(String(list[0].id));
+      })
       .catch(err => setError(err.message))
       .finally(() => setLoadingParties(false));
   }, [type]);
