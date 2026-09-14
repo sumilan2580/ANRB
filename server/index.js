@@ -3112,7 +3112,7 @@ app.get('/api/inventory/raw-materials', async (req, res) => {
     SELECT rm.id, rm.code, rm.name, rm.category, rm.unit, rm.min_stock_alert, rm.status,
            COALESCE(SUM(m.quantity_change), 0) AS current_stock_kg,
            COALESCE(SUM(CASE WHEN m.movement_type = 'PURCHASE' THEN m.quantity_change ELSE 0 END), 0) AS total_purchased_kg,
-           COALESCE(SUM(CASE WHEN m.movement_type = 'PRODUCTION_CONSUMPTION' THEN ABS(m.quantity_change) ELSE 0 END), 0) AS total_consumed_kg,
+           COALESCE(SUM(CASE WHEN m.movement_type IN ('CONSUMPTION', 'PRODUCTION_CONSUMPTION') THEN ABS(m.quantity_change) ELSE 0 END), 0) AS total_consumed_kg,
            COALESCE(SUM(CASE WHEN m.movement_type = 'ADJUSTMENT' THEN m.quantity_change ELSE 0 END), 0) AS total_adjusted_kg
     FROM raw_materials rm
     LEFT JOIN raw_material_movements m ON rm.id = m.raw_material_id
