@@ -218,33 +218,57 @@ export default function MastersPage() {
 
   async function loadAll() {
     setLoading(true);
+    setError('');
     try {
+      // 1. Try single consolidated request first (fastest, 1 connection, no concurrency limit risk)
+      try {
+        const data = await api.getAllMasters();
+        if (data && (data.rawMaterials || data.customers || data.finishedGoods)) {
+          setRawMaterials(data.rawMaterials || []);
+          setFinishedGoods(data.finishedGoods || []);
+          setCustomers(data.customers || []);
+          setSuppliers(data.suppliers || []);
+          setMachines(data.machines || []);
+          setShifts(data.shifts || []);
+          setManagers(data.managers || []);
+          setBankAccounts(data.bankAccounts || []);
+          setManagerUsers(data.managerUsers || []);
+          if (data.companySettings) {
+            setCompanySettings(prev => ({ ...prev, ...data.companySettings }));
+          }
+          return;
+        }
+      } catch (singleErr) {
+        console.warn('Consolidated masters fetch failed, using fallback:', singleErr.message);
+      }
+
+      // 2. Resilient fallback with safe individual catch handlers
       const [rm, fg, cust, supp, mach, sh, mgrs, banks, comp, mgrUsers] = await Promise.all([
-        api.getRawMaterials(),
-        api.getFinishedGoods(),
-        api.getCustomers(),
-        api.getSuppliers(),
-        api.getMachines(),
-        api.getShifts(),
-        api.getManagers(),
+        api.getRawMaterials().catch(() => []),
+        api.getFinishedGoods().catch(() => []),
+        api.getCustomers().catch(() => []),
+        api.getSuppliers().catch(() => []),
+        api.getMachines().catch(() => []),
+        api.getShifts().catch(() => []),
+        api.getManagers().catch(() => []),
         api.getBankAccounts().catch(() => []),
         api.getCompanySettings().catch(() => ({})),
         api.getManagerUsers().catch(() => [])
       ]);
-      setRawMaterials(rm);
-      setFinishedGoods(fg);
-      setCustomers(cust);
-      setSuppliers(supp);
-      setMachines(mach);
-      setShifts(sh);
-      setManagers(mgrs);
+      setRawMaterials(rm || []);
+      setFinishedGoods(fg || []);
+      setCustomers(cust || []);
+      setSuppliers(supp || []);
+      setMachines(mach || []);
+      setShifts(sh || []);
+      setManagers(mgrs || []);
       setBankAccounts(banks || []);
       setManagerUsers(mgrUsers || []);
       if (comp) {
         setCompanySettings(prev => ({ ...prev, ...comp }));
       }
     } catch (err) {
-      setError(err.message);
+      setError(err.message || 'Failed to load master records');
     } finally {
       setLoading(false);
     }

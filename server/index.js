@@ -630,6 +630,50 @@ app.get('/api/dashboard/stats', requireAdmin, async (req, res) => {
 // 2. MASTERS API
 // -------------------------------------------------------------
 
+// Consolidated Masters Endpoint — single HTTP request & connection to load all masters
+app.get('/api/masters/all', async (req, res) => {
+  try {
+    const isManager = req.role === 'manager';
+    const [rawMaterials, finishedGoods, customers, suppliers, machines, shifts, managers, bankAccounts, companySettings, managerUsers] = await Promise.all([
+      db.prepare(`
+        SELECT rm.*, COALESCE((SELECT SUM(quantity_change) FROM raw_material_movements WHERE raw_material_id = rm.id), 0) AS current_stock_kg
+        FROM raw_materials rm
+        ${isManager ? "WHERE rm.status = 'active'" : ""}
+        ORDER BY rm.id ASC
+      `).all(),
+      db.prepare(`
+        SELECT fg.*, COALESCE((SELECT SUM(quantity_change) FROM finished_goods_movements WHERE finished_product_id = fg.id), 0) AS current_stock_kg
+        FROM finished_products fg
+        ${isManager ? "WHERE fg.status = 'active'" : ""}
+        ORDER BY fg.id ASC
+      `).all(),
+      db.prepare(`SELECT * FROM customers ${isManager ? "WHERE status = 'active'" : ""} ORDER BY id ASC`).all(),
+      db.prepare(`SELECT * FROM suppliers ${isManager ? "WHERE status = 'active'" : ""} ORDER BY id ASC`).all(),
+      db.prepare(`SELECT * FROM machines ORDER BY id ASC`).all(),
+      db.prepare(`SELECT * FROM shifts ORDER BY id ASC`).all(),
+      db.prepare(`SELECT * FROM managers ORDER BY id ASC`).all(),
+      db.prepare(`SELECT * FROM bank_accounts ORDER BY id ASC`).all().catch(() => []),
+      getCompanySettings().catch(() => ({})),
+      db.prepare(`SELECT id, username, role, name, status, manager_id, created_at FROM users WHERE role = 'manager' ORDER BY id ASC`).all().catch(() => [])
+    ]);
+
+    res.json({
+      rawMaterials,
+      finishedGoods,
+      customers,
+      suppliers,
+      machines,
+      shifts,
+      managers,
+      bankAccounts: bankAccounts || [],
+      companySettings: companySettings || {},
+      managerUsers: managerUsers || []
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Raw Materials
 app.get('/api/masters/raw-materials', async (req, res) => {
   if (req.role === 'manager') {

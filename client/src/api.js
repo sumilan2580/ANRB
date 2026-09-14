@@ -78,6 +78,7 @@ export const api = {
   getDashboardStats: () => request('/dashboard/stats'),
 
   // Masters
+  getAllMasters: () => request('/masters/all'),
   getRawMaterials: () => request('/masters/raw-materials'),
   createRawMaterial: (data) => request('/masters/raw-materials', { method: 'POST', body: JSON.stringify(data) }),
   updateRawMaterial: (id, data) => request(`/masters/raw-materials/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
