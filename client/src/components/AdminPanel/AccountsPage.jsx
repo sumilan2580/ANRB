@@ -506,6 +506,17 @@ function LedgerView({ type, parties, customers, suppliers, onAddPayment }) {
   const [error, setError] = useState('');
   const [invoiceSaleId, setInvoiceSaleId] = useState(null);
 
+  // Auto-select first party when list loads or type switches
+  useEffect(() => {
+    setLedger(null);
+    setError('');
+    if (parties && parties.length > 0) {
+      setPartyId(String(parties[0].id));
+    } else {
+      setPartyId('');
+    }
+  }, [type, parties]);
+
   const load = async () => {
     if (!partyId) return setError('Please select a party first.');
     setLoading(true); setError('');
