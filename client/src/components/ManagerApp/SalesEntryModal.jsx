@@ -113,7 +113,7 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
     }
 
     if (!isAdmin && isInsufficientStock) {
-      setError(`Insufficient stock! Available: ${availableStock.toLocaleString()} KG, Required: ${numQty.toLocaleString()} KG.`);
+      setError('Quantity exceeds available stock.');
       return;
     }
 
@@ -232,7 +232,7 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
                       const stockLabel = outOfStock
                         ? ' — ⛔ No Stock'
                         : fgLow
-                          ? ` | ⚠️ Low: ${fgStock.toLocaleString()} KG`
+                          ? ' | ⚠️ Low Stock'
                           : ` | Stock: ${fgStock.toLocaleString()} KG`;
                       return (
                         <option key={fg.id} value={fg.id} disabled={!isAdmin && outOfStock}>
@@ -250,7 +250,7 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
                         </span>
                       ) : isLowStock ? (
                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: '700', color: 'var(--amber)', background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: '6px', padding: '4px 10px' }}>
-                          <AlertCircle size={12} /> ⚠️ Low Stock — {availableStock.toLocaleString()} KG (Min Alert: {minStockAlert.toLocaleString()} KG)
+                          <AlertCircle size={12} /> ⚠️ Low Stock
                         </span>
                       ) : (
                         <span style={{ fontSize: '12px', fontWeight: '600', color: isInsufficientStock ? 'var(--rose)' : 'var(--emerald)' }}>
@@ -273,7 +273,7 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
                     />
                     {!isAdmin && isInsufficientStock && (
                       <div style={{ marginTop: '4px', fontSize: '11.5px', color: 'var(--rose)', fontWeight: '600' }}>
-                        ⚠️ Quantity exceeds available stock ({availableStock.toLocaleString()} KG)
+                        ⚠️ Quantity exceeds available stock
                       </div>
                     )}
                   </div>
@@ -348,7 +348,7 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
               type="submit"
               className="btn btn-emerald"
               disabled={submitting || loading || isBlockedByStock || numQty <= 0 || !finishedProductId || !customerId}
-              title={isBlockedByStock ? (isNoStock ? 'Stock nahi hai — sale allowed nahi' : `Stock kam hai — ${availableStock.toLocaleString()} KG available`) : ''}
+              title={isBlockedByStock ? (isNoStock ? 'Stock nahi hai — sale allowed nahi' : 'Quantity exceeds available stock') : ''}
             >
               <CheckCircle2 size={16} />
               {submitting ? 'Saving...' : initialSale ? 'Save Changes' : 'Save Sales Entry'}
