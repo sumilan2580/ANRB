@@ -173,6 +173,15 @@ export const api = {
   createPayment: (payload) => request('/api/accounts/payments', {
     method: 'POST',
     body: JSON.stringify(payload)
-  })
+  }),
+
+  // Staff & Attendance
+  getStaff: () => request('/api/masters/staff'),
+  getAttendance: (params = '') => request(`/api/attendance${params ? (params.startsWith('?') ? params : `?${params}`) : ''}`),
+  saveAttendanceBulk: (payload) => request('/api/attendance/bulk', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  }),
+  getAttendanceSummary: (month = '') => request(`/api/attendance/summary${month ? `?month=${encodeURIComponent(month)}` : ''}`)
 };
 

@@ -4,7 +4,7 @@ import {
   Plus, Clock, FileText, UserCheck, Layers, ClipboardList,
   ArrowDownLeft, ArrowUpRight, CreditCard, Printer, ShieldCheck,
   BookOpen, Download, MessageCircle, Cpu, Building2, Search, CheckCircle2,
-  AlertCircle, Eye, Share2, Send, X, AlertTriangle, ChevronDown
+  AlertCircle, Eye, Share2, Send, X, AlertTriangle, ChevronDown, CalendarDays
 } from 'lucide-react';
 import { api, session } from '../../api';
 
@@ -103,6 +103,7 @@ import SalesEntryModal from '../ManagerApp/SalesEntryModal';
 import PaymentEntryModal from '../ManagerApp/PaymentEntryModal';
 import ConsumptionEntryModal from '../ManagerApp/ConsumptionEntryModal';
 import TaxInvoiceModal from './TaxInvoiceModal';
+import AttendanceView from '../AttendanceView';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function fmtINR(num) {
@@ -1518,6 +1519,7 @@ export default function ManagerPanel({ user, onLogout }) {
         <NavItem icon={Factory}     label="Daily Production"      active={activeTab === 'productions'}   onClick={() => setActiveTab('productions')} badge={entries.productions.length || undefined} />
         <NavItem icon={Truck}       label="Sales & Tax Invoices"   active={activeTab === 'sales'}         onClick={() => setActiveTab('sales')} badge={entries.sales.length || undefined} />
         <NavItem icon={CreditCard}  label="Receipts & Payments"    active={activeTab === 'payments'}      onClick={() => setActiveTab('payments')} badge={entries.payments.length || undefined} />
+        <NavItem icon={CalendarDays} label="Staff Attendance"       active={activeTab === 'attendance'}    onClick={() => setActiveTab('attendance')} />
 
         <div style={{ height: '1px', background: 'rgba(255,255,255,0.05)', margin: '8px 4px' }} />
 
@@ -1623,6 +1625,16 @@ export default function ManagerPanel({ user, onLogout }) {
                   }}
                 >
                   <Plus size={16} /> + Customer Receipt
+                </button>
+                <button
+                  onClick={() => setActiveTab('attendance')}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '10px',
+                    padding: '12px 14px', borderRadius: '10px', border: '1px solid rgba(168,85,247,0.25)',
+                    background: 'rgba(168,85,247,0.08)', color: '#c084fc', cursor: 'pointer', fontWeight: '600', fontSize: '13px'
+                  }}
+                >
+                  <CalendarDays size={16} /> + Staff Attendance
                 </button>
               </div>
             </div>
@@ -2000,6 +2012,13 @@ export default function ManagerPanel({ user, onLogout }) {
         {/* ─── MASTERS VIEW (CREATE ONLY) ─── */}
         {activeTab === 'masters' && (
           <ManagerMasters managerName={managerName} />
+        )}
+
+        {/* ─── STAFF ATTENDANCE VIEW ─── */}
+        {activeTab === 'attendance' && (
+          <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
+            <AttendanceView mode="manager" markerName={managerName} />
+          </div>
         )}
 
       </main>

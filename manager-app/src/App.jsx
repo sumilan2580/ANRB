@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   ShoppingBag, Layers, Factory, Truck, ArrowDownLeft, ArrowUpRight,
-  ChevronRight, User, AlertTriangle, Wifi, Settings, X, CheckCircle2
+  ChevronRight, User, AlertTriangle, Wifi, Settings, X, CheckCircle2, CalendarDays
 } from 'lucide-react';
 import { api, getStoredProfile, getStoredToken, getServerUrl, setServerUrl, DEFAULT_HOST_URL } from './api';
 import SetupScreen from './components/SetupScreen';
@@ -10,6 +10,7 @@ import ConsumptionModal from './components/ConsumptionModal';
 import ProductionModal from './components/ProductionModal';
 import SalesModal from './components/SalesModal';
 import PaymentModal from './components/PaymentModal';
+import AttendanceModal from './components/AttendanceModal';
 
 export default function App() {
   const [profile, setProfile] = useState(() => getStoredProfile());
@@ -23,6 +24,7 @@ export default function App() {
   const [showProduction, setShowProduction] = useState(false);
   const [showSales, setShowSales] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
+  const [showAttendance, setShowAttendance] = useState(false);
   const [paymentDefaultType, setPaymentDefaultType] = useState('CUSTOMER');
 
   const [showServerModal, setShowServerModal] = useState(false);
@@ -153,7 +155,7 @@ export default function App() {
           </div>
         )}
 
-        <div className="screen-label">6 Daily Factory Operations</div>
+        <div className="screen-label">7 Daily Factory Operations</div>
 
         {/* 1. Raw Material Purchase Card */}
         <div
@@ -251,6 +253,22 @@ export default function App() {
           <ChevronRight size={20} className="card-arrow" />
         </div>
 
+        {/* 7. Staff Attendance Card */}
+        <div
+          className="action-card card-attendance"
+          onClick={() => !isDeactivated && setShowAttendance(true)}
+          style={{ opacity: isDeactivated ? 0.6 : 1 }}
+        >
+          <div className="card-icon-box" style={{ background: 'rgba(168, 85, 247, 0.15)', color: '#c084fc' }}>
+            <CalendarDays size={26} />
+          </div>
+          <div className="card-text">
+            <div className="card-title">7. Staff Attendance</div>
+            <div className="card-desc">Mark daily attendance (Full Day, Half Day, Not Present)</div>
+          </div>
+          <ChevronRight size={20} className="card-arrow" />
+        </div>
+
         {/* Footer info note */}
         <div style={{ marginTop: 'auto', textAlign: 'center', padding: '16px 0', color: 'var(--text-dim)', fontSize: '11px' }}>
           Role: Factory Floor Manager (Entry Only) • All entries stamped with {profile.name}
@@ -286,6 +304,12 @@ export default function App() {
         isOpen={showPayment}
         defaultType={paymentDefaultType}
         onClose={() => setShowPayment(false)}
+        onSuccess={() => {}}
+      />
+
+      <AttendanceModal
+        isOpen={showAttendance}
+        onClose={() => setShowAttendance(false)}
         onSuccess={() => {}}
       />
 
