@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Scale, CheckCircle2, AlertTriangle, TrendingDown, TrendingUp, RefreshCw } from 'lucide-react';
+import { Scale, CheckCircle2, AlertTriangle, TrendingDown, TrendingUp, RefreshCw, Search } from 'lucide-react';
 import { api } from '../../api';
 
 export default function StockReconciliation() {
@@ -17,6 +17,7 @@ export default function StockReconciliation() {
   const [preview, setPreview] = useState(null);
   const [successMsg, setSuccessMsg] = useState('');
   const [error, setError] = useState('');
+  const [itemSearch, setItemSearch] = useState('');
 
   useEffect(() => {
     loadAll();
@@ -70,6 +71,7 @@ export default function StockReconciliation() {
     setItemId('');
     setPhysicalQty('');
     setPreview(null);
+    setItemSearch('');
     const items = type === 'RAW_MATERIAL' ? rawMaterials : finishedGoods;
     if (items.length > 0) setItemId(items[0].id);
   };
@@ -162,20 +164,43 @@ export default function StockReconciliation() {
 
             <div className="form-group" style={{ marginBottom: 0 }}>
               <label className="form-label">Select Item *</label>
+              <div style={{ position: 'relative', marginBottom: '6px' }}>
+                <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-dim)', pointerEvents: 'none' }} />
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="Search item..."
+                  value={itemSearch}
+                  onChange={e => setItemSearch(e.target.value)}
+                  style={{ paddingLeft: '32px', fontSize: '13px' }}
+                />
+              </div>
               <select
                 className="form-select"
                 value={itemId}
                 onChange={(e) => setItemId(e.target.value)}
                 required
               >
-                {currentItems.map(item => (
-                  <option key={item.id} value={item.id}>
-                    {itemType === 'RAW_MATERIAL'
-                      ? `${item.name} (Stock: ${item.current_stock_kg?.toLocaleString()} KG)`
-                      : `${item.product_name} ${item.gsm} GSM ${item.width_size} ${item.colour} — ${item.current_stock_kg?.toLocaleString()} KG`
+                {currentItems
+                  .filter(item => {
+                    if (!itemSearch) return true;
+                    const q = itemSearch.toLowerCase();
+                    if (itemType === 'RAW_MATERIAL') {
+                      return item.name?.toLowerCase().includes(q) || item.code?.toLowerCase().includes(q);
+                    } else {
+                      return item.product_name?.toLowerCase().includes(q) || item.product_code?.toLowerCase().includes(q) || item.colour?.toLowerCase().includes(q) || String(item.gsm || '').includes(q);
                     }
-                  </option>
-                ))}
+                  })
+                  .map(item => {
+                    const shortName = itemType === 'RAW_MATERIAL'
+                      ? `[${item.code || item.id}] ${item.name} (${item.current_stock_kg?.toLocaleString() || 0} KG)`
+                      : `[${item.product_code || item.id}] ${(item.product_name || '').replace(/BENGAL STOCK\s*/i, '').trim() || `${item.gsm || ''}GSM ${item.width_size || ''} ${item.colour || ''}`} — ${item.current_stock_kg?.toLocaleString() || 0} KG`;
+                    return (
+                      <option key={item.id} value={item.id}>
+                        {shortName}
+                      </option>
+                    );
+                  })}
               </select>
             </div>
 

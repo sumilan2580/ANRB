@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Layers, Package, RefreshCw, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { Layers, Package, RefreshCw, AlertCircle, ChevronDown, ChevronUp, Search } from 'lucide-react';
 import { api } from '../../api';
 
 function exportCSV(rows, filename) {
@@ -23,6 +23,8 @@ export default function StockLedger() {
   const [ledger, setLedger] = useState([]);
   const [ledgerType, setLedgerType] = useState('RAW_MATERIAL');
   const [loading, setLoading] = useState(true);
+  const [rmSearch, setRmSearch] = useState('');
+  const [fgSearch, setFgSearch] = useState('');
 
   useEffect(() => {
     loadAll();
@@ -106,11 +108,24 @@ export default function StockLedger() {
         <div className="table-container">
           <div className="table-toolbar">
             <span style={{ fontWeight: '600', color: 'var(--text-muted)', fontSize: '13px' }}>
-              Raw Material Inventory — {rawMaterials.length} items
+              Raw Material Inventory — {rawMaterials.filter(rm => !rmSearch || rm.name?.toLowerCase().includes(rmSearch.toLowerCase()) || rm.code?.toLowerCase().includes(rmSearch.toLowerCase()) || rm.category?.toLowerCase().includes(rmSearch.toLowerCase())).length} items
             </span>
-            <button className="btn btn-outline btn-sm" onClick={() => exportCSV(rawMaterials, 'raw_material_stock.csv')}>
-              Export CSV
-            </button>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <div style={{ position: 'relative' }}>
+                <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-dim)' }} />
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="Search material..."
+                  value={rmSearch}
+                  onChange={e => setRmSearch(e.target.value)}
+                  style={{ paddingLeft: '32px', height: '34px', fontSize: '13px', width: '200px' }}
+                />
+              </div>
+              <button className="btn btn-outline btn-sm" onClick={() => exportCSV(rawMaterials, 'raw_material_stock.csv')}>
+                Export CSV
+              </button>
+            </div>
           </div>
           <div style={{ overflowX: 'auto' }}>
             <table className="custom-table">
@@ -129,7 +144,7 @@ export default function StockLedger() {
                 </tr>
               </thead>
               <tbody>
-                {rawMaterials.map(rm => {
+                {rawMaterials.filter(rm => !rmSearch || rm.name?.toLowerCase().includes(rmSearch.toLowerCase()) || rm.code?.toLowerCase().includes(rmSearch.toLowerCase()) || rm.category?.toLowerCase().includes(rmSearch.toLowerCase())).map(rm => {
                   const isLow = rm.current_stock_kg <= rm.min_stock_alert;
                   return (
                     <tr key={rm.id}>
@@ -172,11 +187,24 @@ export default function StockLedger() {
         <div className="table-container">
           <div className="table-toolbar">
             <span style={{ fontWeight: '600', color: 'var(--text-muted)', fontSize: '13px' }}>
-              Finished Goods Inventory — {finishedGoods.length} specifications
+              Finished Goods Inventory — {finishedGoods.filter(fg => !fgSearch || fg.product_name?.toLowerCase().includes(fgSearch.toLowerCase()) || fg.product_code?.toLowerCase().includes(fgSearch.toLowerCase()) || fg.colour?.toLowerCase().includes(fgSearch.toLowerCase()) || String(fg.gsm || '').includes(fgSearch)).length} specifications
             </span>
-            <button className="btn btn-outline btn-sm" onClick={() => exportCSV(finishedGoods, 'finished_goods_stock.csv')}>
-              Export CSV
-            </button>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <div style={{ position: 'relative' }}>
+                <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-dim)' }} />
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="Search product, colour, GSM..."
+                  value={fgSearch}
+                  onChange={e => setFgSearch(e.target.value)}
+                  style={{ paddingLeft: '32px', height: '34px', fontSize: '13px', width: '220px' }}
+                />
+              </div>
+              <button className="btn btn-outline btn-sm" onClick={() => exportCSV(finishedGoods, 'finished_goods_stock.csv')}>
+                Export CSV
+              </button>
+            </div>
           </div>
           <div style={{ overflowX: 'auto' }}>
             <table className="custom-table">
@@ -196,7 +224,7 @@ export default function StockLedger() {
                 </tr>
               </thead>
               <tbody>
-                {finishedGoods.map(fg => (
+                {finishedGoods.filter(fg => !fgSearch || fg.product_name?.toLowerCase().includes(fgSearch.toLowerCase()) || fg.product_code?.toLowerCase().includes(fgSearch.toLowerCase()) || fg.colour?.toLowerCase().includes(fgSearch.toLowerCase()) || String(fg.gsm || '').includes(fgSearch)).map(fg => (
                   <tr key={fg.id}>
                     <td><span className="pill pill-cyan num-mono">{fg.product_code}</span></td>
                     <td style={{ fontWeight: '600' }}>{fg.product_name}</td>

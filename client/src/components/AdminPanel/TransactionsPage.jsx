@@ -189,7 +189,7 @@ function AddOrderModal({ isOpen, customers, finishedGoods, onClose, onSuccess })
                   <option value="">Select Finished Good…</option>
                   {finishedGoods.map(fg => (
                     <option key={fg.id} value={fg.id}>
-                      {fg.product_name} ({fg.gsm} GSM, {fg.width_size}, {fg.colour})
+                      [${fg.product_code || fg.id}] {(fg.product_name || '').replace(/BENGAL STOCK\s*/i, '').trim() || `${fg.gsm || ''}GSM ${fg.width_size || ''} ${fg.colour || ''}`}
                     </option>
                   ))}
                 </select>

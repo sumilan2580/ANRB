@@ -1520,8 +1520,24 @@ function OpeningBalancesView({ customers, suppliers }) {
     switch (form.entityType) {
       case 'CUSTOMER': return customers;
       case 'SUPPLIER': return suppliers;
-      case 'RAW_MATERIAL': case 'RM': return rawMaterials;
-      case 'FINISHED_GOOD': case 'FG': return finishedGoods;
+      case 'RAW_MATERIAL': case 'RM':
+        return rawMaterials.map(rm => ({
+          id: rm.id,
+          name: `[${rm.code || rm.id}] ${rm.name || ''}`.trim()
+        }));
+      case 'FINISHED_GOOD': case 'FG':
+        return finishedGoods.map(fg => {
+          const cleanName = (fg.product_name || '')
+            .replace(/BENGAL STOCK\s*/i, '')
+            .trim();
+          const label = cleanName
+            ? `[${fg.product_code || fg.id}] ${cleanName}`
+            : `[${fg.product_code || fg.id}] ${fg.gsm ? fg.gsm + 'GSM ' : ''}${fg.width_size || ''} ${fg.colour || ''}`.trim();
+          return {
+            id: fg.id,
+            name: label
+          };
+        });
       case 'BANK': return bankAccounts.map(b => ({ id: b.id, name: b.account_name || b.bank_name }));
       default: return [];
     }
@@ -1531,8 +1547,12 @@ function OpeningBalancesView({ customers, suppliers }) {
   const isCash = form.entityType === 'CASH';
   const needsParty = !isCash;
 
+  // Entity search state for searchable dropdown
+  const [entitySearch, setEntitySearch] = React.useState('');
+
   const openAdd = () => {
     setEditBal(null);
+    setEntitySearch('');
     setForm({ financialYear: financialYears.find(f => f.is_active)?.name || '', entityType: 'CUSTOMER', entityId: '', openingDate: new Date().toISOString().split('T')[0], amount: '', balanceType: 'Dr', quantity: '', unit: 'KG', rate: '', remarks: '' });
     setFormError('');
     setShowModal(true);
@@ -1718,11 +1738,27 @@ function OpeningBalancesView({ customers, suppliers }) {
                     </select>
                   </div>
                   {needsParty && (
-                    <div className="form-group">
+                    <div className="form-group" style={{ gridColumn: 'span 2' }}>
                       <label className="form-label">{etLabel(form.entityType)} *</label>
-                      <select className="form-select" value={form.entityId} onChange={e => setForm({ ...form, entityId: e.target.value })} required>
+                      <input
+                        type="text"
+                        className="form-input"
+                        placeholder={`Search ${etLabel(form.entityType)}…`}
+                        value={entitySearch}
+                        onChange={e => { setEntitySearch(e.target.value); setForm(f => ({ ...f, entityId: '' })); }}
+                        style={{ marginBottom: '6px' }}
+                      />
+                      <select
+                        className="form-select"
+                        value={form.entityId}
+                        onChange={e => { setForm({ ...form, entityId: e.target.value }); setEntitySearch(''); }}
+                        required
+                      >
                         <option value="">Select…</option>
-                        {entityOptions().map(p => <option key={p.id} value={p.id}>{p.name || p.account_name}</option>)}
+                        {entityOptions()
+                          .filter(p => !entitySearch || (p.name || '').toLowerCase().includes(entitySearch.toLowerCase()))
+                          .map(p => <option key={p.id} value={p.id}>{p.name}</option>)
+                        }
                       </select>
                     </div>
                   )}
