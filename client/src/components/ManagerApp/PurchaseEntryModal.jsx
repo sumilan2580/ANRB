@@ -184,6 +184,7 @@ export default function PurchaseEntryModal({ isOpen, onClose, onSuccess, manager
   const [otherCharges, setOtherCharges] = useState('');
   const [roundOff, setRoundOff] = useState('');
   const [remarks, setRemarks] = useState('');
+  const [taxModeOverride, setTaxModeOverride] = useState(null); // null = auto, 'INTER', or 'INTRA'
 
   // EL / Extra Charges (Freight, Loading, etc.)
   const [elCharges, setElCharges] = useState([]);
@@ -222,6 +223,11 @@ export default function PurchaseEntryModal({ isOpen, onClose, onSuccess, manager
         setOtherCharges(String(initialPurchase.other_charges || ''));
         setRoundOff(String(initialPurchase.round_off || ''));
         setRemarks(initialPurchase.remarks || '');
+        setTaxModeOverride(
+          parseFloat(initialPurchase.igst_amount || 0) > 0 ? 'INTER' :
+          (parseFloat(initialPurchase.cgst_amount || 0) > 0 ? 'INTRA' : null)
+        );
+
         let parsedEl = [];
         try {
           parsedEl = typeof initialPurchase.el_charges === 'string'
@@ -230,7 +236,12 @@ export default function PurchaseEntryModal({ isOpen, onClose, onSuccess, manager
         } catch (e) {
           parsedEl = [];
         }
-        setElCharges(parsedEl);
+        setElCharges(parsedEl.map((c, idx) => ({
+          id: c.id || Date.now() + idx,
+          label: c.label || 'Freight Charges',
+          amount: String(c.amount !== undefined ? c.amount : ''),
+          gstPercent: String(c.gstPercent !== undefined ? c.gstPercent : (initialPurchase.purchase_type === 'NON_GST' ? 0 : 18))
+        })));
 
         if (initialPurchase.items && initialPurchase.items.length > 0) {
           setItems(initialPurchase.items.map((it, idx) => ({
@@ -266,6 +277,7 @@ export default function PurchaseEntryModal({ isOpen, onClose, onSuccess, manager
         setOtherCharges('');
         setRoundOff('');
         setRemarks('');
+        setTaxModeOverride(null);
         setElCharges([]);
 
         if (activeRMs.length > 0) {
@@ -347,15 +359,33 @@ export default function PurchaseEntryModal({ isOpen, onClose, onSuccess, manager
         return { ...it, gstPercent: String(rm?.gst_percent || 18) };
       }
     }));
+    setElCharges(elCharges.map(c => ({
+      ...c,
+      gstPercent: newType === 'NON_GST' ? '0' : (c.gstPercent === '0' ? '18' : c.gstPercent)
+    })));
+  };
+
+  // Helper to detect Interstate supplier from GSTIN state code or state name
+  const detectIsInterState = (supp) => {
+    if (!supp) return false;
+    const cleanGstin = String(supp.gst_number || '').trim();
+    if (cleanGstin.length >= 2 && /^\d{2}/.test(cleanGstin)) {
+      return cleanGstin.substring(0, 2) !== '24';
+    }
+    if (supp.state && supp.state.trim()) {
+      return supp.state.trim().toLowerCase() !== 'gujarat';
+    }
+    return false;
   };
 
   // Calculations
   const isGST = (purchaseType === 'GST');
   const selectedSupplier = suppliers.find(s => String(s.id) === String(supplierId));
-  const isInterState = selectedSupplier && selectedSupplier.state && selectedSupplier.state.toLowerCase() !== 'gujarat';
+  const autoIsInterState = detectIsInterState(selectedSupplier);
+  const isInterState = isGST && (taxModeOverride !== null ? (taxModeOverride === 'INTER') : autoIsInterState);
 
-  let totalTaxable = 0;
-  let totalGst = 0;
+  let totalItemTaxable = 0;
+  let totalItemGst = 0;
 
   const calculatedLines = items.map(it => {
     const q = parseFloat(it.quantity) || 0;
@@ -366,8 +396,8 @@ export default function PurchaseEntryModal({ isOpen, onClose, onSuccess, manager
     const gstAmt = taxable * (gstPct / 100);
     const lineTotal = taxable + gstAmt;
 
-    totalTaxable += taxable;
-    totalGst += gstAmt;
+    totalItemTaxable += taxable;
+    totalItemGst += gstAmt;
 
     return {
       ...it,
@@ -377,16 +407,45 @@ export default function PurchaseEntryModal({ isOpen, onClose, onSuccess, manager
     };
   });
 
+  // Calculate Extra Charges with GST
+  let totalChargeTaxable = 0;
+  let totalChargeGst = 0;
+
+  const calculatedCharges = elCharges.map(c => {
+    const amt = parseFloat(c.amount) || 0;
+    const gstPct = isGST ? (parseFloat(c.gstPercent !== undefined ? c.gstPercent : 18) || 0) : 0;
+    const gstAmt = amt * (gstPct / 100);
+    totalChargeTaxable += amt;
+    totalChargeGst += gstAmt;
+    return {
+      ...c,
+      taxable: amt,
+      gstPct,
+      gstAmt,
+      total: amt + gstAmt
+    };
+  });
+
+  const totalTaxable = totalItemTaxable + totalChargeTaxable;
+  const totalGst = totalItemGst + totalChargeGst;
+
   const billDiscount = parseFloat(discountAmount) || 0;
   const billOther = parseFloat(otherCharges) || 0;
   const billRound = parseFloat(roundOff) || 0;
-  const totalElCharges = elCharges.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
 
-  const grandTotal = Math.max(0, totalTaxable + totalGst + billOther + totalElCharges - billDiscount + billRound);
+  const grandTotal = Math.max(0, totalTaxable + totalGst + billOther - billDiscount + billRound);
 
   // EL Charges helpers
   const handleAddElCharge = () => {
-    setElCharges([...elCharges, { id: Date.now(), label: 'Freight Charges', amount: '' }]);
+    setElCharges([
+      ...elCharges,
+      {
+        id: Date.now() + Math.random(),
+        label: 'Freight Charges',
+        amount: '',
+        gstPercent: isGST ? '18' : '0'
+      }
+    ]);
   };
   const handleRemoveElCharge = (id) => setElCharges(elCharges.filter(c => c.id !== id));
   const handleElChargeChange = (id, field, val) => setElCharges(elCharges.map(c => c.id === id ? { ...c, [field]: val } : c));
@@ -426,7 +485,16 @@ export default function PurchaseEntryModal({ isOpen, onClose, onSuccess, manager
         discountAmount: billDiscount,
         otherCharges: billOther,
         roundOff: billRound,
-        elCharges: elCharges.filter(c => c.label && parseFloat(c.amount) > 0),
+        isInterState,
+        elCharges: calculatedCharges.filter(c => c.label && c.taxable > 0).map(c => ({
+          id: c.id,
+          label: c.label.trim(),
+          amount: c.taxable,
+          gstPercent: isGST ? (parseFloat(c.gstPercent) || 0) : 0,
+          taxableAmount: c.taxable,
+          gstAmount: c.gstAmt,
+          totalAmount: c.total
+        })),
         remarks,
         managerName: managerProfile?.name || 'Admin',
         managerId: managerProfile?.id || null,
@@ -507,13 +575,19 @@ export default function PurchaseEntryModal({ isOpen, onClose, onSuccess, manager
                     <label className="form-label">Supplier *</label>
                     <SearchableSelect
                       value={supplierId}
-                      onChange={v => setSupplierId(v)}
+                      onChange={v => {
+                        setSupplierId(v);
+                        setTaxModeOverride(null);
+                      }}
                       options={[
                         { value: '', label: 'Select Supplier...' },
-                        ...suppliers.map(s => ({
-                          value: String(s.id),
-                          label: `${s.name} (${s.gst_number || 'URP'})`
-                        }))
+                        ...suppliers.map(s => {
+                          const isInter = detectIsInterState(s);
+                          return {
+                            value: String(s.id),
+                            label: `${s.name} (${s.gst_number || 'URP'})${isInter ? ' ✈ [IGST]' : ' 📍 [CGST+SGST]'}`
+                          };
+                        })
                       ]}
                       placeholder="Search supplier..."
                       required
@@ -601,7 +675,7 @@ export default function PurchaseEntryModal({ isOpen, onClose, onSuccess, manager
                                   style={{ padding: '6px 8px', fontSize: '12px' }}
                                   placeholder="e.g. 100"
                                   step="any"
-                                  min="0.01"
+                                  min="0"
                                   value={it.quantity}
                                   onChange={e => handleItemChange(it.id, 'quantity', e.target.value)}
                                   required
@@ -620,8 +694,8 @@ export default function PurchaseEntryModal({ isOpen, onClose, onSuccess, manager
                                   className="form-input"
                                   style={{ padding: '6px 8px', fontSize: '12px' }}
                                   placeholder="Rate/unit"
-                                  step="0.01"
-                                  min="0.01"
+                                  step="any"
+                                  min="0"
                                   value={it.rate}
                                   onChange={e => handleItemChange(it.id, 'rate', e.target.value)}
                                   required
@@ -711,49 +785,102 @@ export default function PurchaseEntryModal({ isOpen, onClose, onSuccess, manager
                         </div>
                       )}
 
-                      {elCharges.map((c, idx) => (
-                        <div key={c.id} style={{ display: 'flex', gap: '6px', marginBottom: '6px', alignItems: 'center' }}>
-                          <SearchableSelect
-                            value={c.label}
-                            onChange={v => handleElChargeChange(c.id, 'label', v)}
-                            options={[
-                              { value: 'Freight Charges', label: 'Freight Charges' },
-                              { value: 'Loading Charges', label: 'Loading Charges' },
-                              { value: 'Unloading Charges', label: 'Unloading Charges' },
-                              { value: 'Transport Charges', label: 'Transport Charges' },
-                              { value: 'Packing Charges', label: 'Packing Charges' },
-                              { value: 'Handling Charges', label: 'Handling Charges' },
-                              { value: 'Insurance Charges', label: 'Insurance Charges' },
-                              { value: 'Other Charges', label: 'Other Charges' },
-                            ]}
-                            placeholder="Charge name (e.g. Freight)..."
-                            allowCustom={true}
-                            style={{ flex: 2 }}
-                          />
-                          <input
-                            type="number"
-                            className="form-input"
-                            style={{ flex: 1, padding: '6px 8px', fontSize: '12px' }}
-                            placeholder="Amount"
-                            step="0.01"
-                            min="0"
-                            value={c.amount}
-                            onChange={e => handleElChargeChange(c.id, 'amount', e.target.value)}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveElCharge(c.id)}
-                            style={{ background: 'none', border: 'none', color: 'var(--rose)', cursor: 'pointer', padding: '4px', flexShrink: 0 }}
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        </div>
-                      ))}
+                      {elCharges.map((c, idx) => {
+                        const amt = parseFloat(c.amount) || 0;
+                        const gstP = isGST ? (parseFloat(c.gstPercent !== undefined ? c.gstPercent : 18) || 0) : 0;
+                        const taxPart = amt * (gstP / 100);
+                        return (
+                          <div key={c.id} style={{ display: 'flex', gap: '6px', marginBottom: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                            <SearchableSelect
+                              value={c.label}
+                              onChange={v => handleElChargeChange(c.id, 'label', v)}
+                              options={[
+                                { value: 'Freight Charges', label: 'Freight Charges' },
+                                { value: 'Loading Charges', label: 'Loading Charges' },
+                                { value: 'Unloading Charges', label: 'Unloading Charges' },
+                                { value: 'Transport Charges', label: 'Transport Charges' },
+                                { value: 'Packing Charges', label: 'Packing Charges' },
+                                { value: 'Handling Charges', label: 'Handling Charges' },
+                                { value: 'Insurance Charges', label: 'Insurance Charges' },
+                                { value: 'Other Charges', label: 'Other Charges' },
+                              ]}
+                              placeholder="Charge name (e.g. Freight)..."
+                              allowCustom={true}
+                              style={{ flex: '2 1 140px' }}
+                            />
+                            <input
+                              type="number"
+                              className="form-input"
+                              style={{ flex: '1 1 80px', padding: '6px 8px', fontSize: '12px' }}
+                              placeholder="Amount ₹"
+                              step="any"
+                              min="0"
+                              value={c.amount}
+                              onChange={e => handleElChargeChange(c.id, 'amount', e.target.value)}
+                            />
+                            {isGST && (
+                              <select
+                                className="form-select"
+                                style={{ width: '80px', padding: '6px 4px', fontSize: '11px', flexShrink: 0 }}
+                                value={c.gstPercent !== undefined ? c.gstPercent : '18'}
+                                onChange={e => handleElChargeChange(c.id, 'gstPercent', e.target.value)}
+                                title="GST % on charge"
+                              >
+                                <option value="0">GST 0%</option>
+                                <option value="5">GST 5%</option>
+                                <option value="12">GST 12%</option>
+                                <option value="18">GST 18%</option>
+                                <option value="28">GST 28%</option>
+                              </select>
+                            )}
+                            {isGST && amt > 0 && (
+                              <div style={{ fontSize: '10.5px', color: 'var(--amber)', whiteSpace: 'nowrap' }}>
+                                +Tax ₹{taxPart.toFixed(2)}
+                              </div>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveElCharge(c.id)}
+                              style={{ background: 'none', border: 'none', color: 'var(--rose)', cursor: 'pointer', padding: '4px', flexShrink: 0 }}
+                              title="Delete charge"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
 
                   <div style={{ fontSize: '12.5px', lineHeight: '1.8' }}>
+                    {isGST && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', padding: '5px 10px', borderRadius: '6px', background: isInterState ? 'rgba(244,63,94,0.1)' : 'rgba(16,185,129,0.1)', border: `1px solid ${isInterState ? 'rgba(244,63,94,0.3)' : 'rgba(16,185,129,0.3)'}` }}>
+                        <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>GST Mode:</span>
+                        <button
+                          type="button"
+                          onClick={() => setTaxModeOverride(isInterState ? 'INTRA' : 'INTER')}
+                          style={{ background: 'none', border: 'none', color: isInterState ? 'var(--rose)' : 'var(--emerald)', fontSize: '11.5px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                          title="Click to switch between IGST and CGST+SGST"
+                        >
+                          <span>{isInterState ? '✈ Inter-State (IGST 100%)' : '📍 Intra-State (CGST + SGST 50:50)'}</span>
+                          <span style={{ fontSize: '10px', textDecoration: 'underline', opacity: 0.75 }}>[Switch]</span>
+                        </button>
+                      </div>
+                    )}
+
                     <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)' }}>
+                      <span>Items Taxable:</span>
+                      <span className="num-mono">₹{totalItemTaxable.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    </div>
+
+                    {totalChargeTaxable > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--amber)' }}>
+                        <span>Extra Charges Taxable:</span>
+                        <span className="num-mono">₹{totalChargeTaxable.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </div>
+                    )}
+
+                    <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)', borderTop: totalChargeTaxable > 0 ? '1px dashed var(--border-color)' : 'none', paddingTop: totalChargeTaxable > 0 ? '4px' : '0', marginTop: totalChargeTaxable > 0 ? '4px' : '0' }}>
                       <span>Total Taxable Amount:</span>
                       <strong style={{ color: 'var(--text-main)' }}>₹{totalTaxable.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
                     </div>
@@ -761,9 +888,9 @@ export default function PurchaseEntryModal({ isOpen, onClose, onSuccess, manager
                     {isGST && (
                       <>
                         {isInterState ? (
-                          <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)' }}>
-                            <span>IGST:</span>
-                            <span className="num-mono">₹{totalGst.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--rose)' }}>
+                            <span>IGST (Items + Charges):</span>
+                            <span className="num-mono" style={{ fontWeight: '700' }}>₹{totalGst.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                           </div>
                         ) : (
                           <>
@@ -780,14 +907,6 @@ export default function PurchaseEntryModal({ isOpen, onClose, onSuccess, manager
                       </>
                     )}
 
-                    {/* EL Charges Subtotal */}
-                    {elCharges.filter(c => parseFloat(c.amount) > 0).map(c => (
-                      <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--amber)' }}>
-                        <span>+ {c.label}:</span>
-                        <span className="num-mono">₹{parseFloat(c.amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                      </div>
-                    ))}
-
                     {/* Round Off */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: 'var(--text-muted)', gap: '8px', marginTop: '4px' }}>
                       <span style={{ whiteSpace: 'nowrap' }}>Round Off (±):</span>
@@ -796,7 +915,7 @@ export default function PurchaseEntryModal({ isOpen, onClose, onSuccess, manager
                         className="form-input"
                         style={{ width: '100px', padding: '3px 8px', fontSize: '12px', textAlign: 'right' }}
                         placeholder="e.g. -0.50"
-                        step="0.01"
+                        step="any"
                         value={roundOff}
                         onChange={e => setRoundOff(e.target.value)}
                       />

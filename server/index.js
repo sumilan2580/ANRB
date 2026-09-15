@@ -68,16 +68,28 @@ app.use(express.json());
 // -------------------------------------------------------------
 // GST CALCULATION & NUMBER TO WORDS HELPERS
 // -------------------------------------------------------------
-function calculateGstBreakdown({ taxableAmount, gstPercent = 18, partyState = 'Gujarat', partyGstin = '' }) {
+function calculateGstBreakdown({ taxableAmount, gstPercent = 18, partyState = 'Gujarat', partyGstin = '', isInterState = null }) {
   const taxAmt = Number(taxableAmount.toFixed(2));
   const gstPct = Number(gstPercent);
   const totalGst = Number(((taxAmt * gstPct) / 100).toFixed(2));
   const grandTotal = Number((taxAmt + totalGst).toFixed(2));
 
   const company = getCompanySettings();
-  const isIntraState = (partyState && partyState.trim().toLowerCase() === company.company_state.trim().toLowerCase()) ||
-                       (partyGstin && partyGstin.trim().startsWith(company.company_state_code)) ||
-                       (!partyState && !partyGstin);
+  const companyStateCode = String(company.company_state_code || '24').trim();
+  const companyState = String(company.company_state || 'Gujarat').trim().toLowerCase();
+
+  let isIntraState = true;
+  if (isInterState !== null && isInterState !== undefined) {
+    isIntraState = !isInterState;
+  } else {
+    const cleanGstin = String(partyGstin || '').trim();
+    if (cleanGstin.length >= 2 && /^\d{2}/.test(cleanGstin)) {
+      // First 2 digits of GSTIN are legal state code
+      isIntraState = (cleanGstin.substring(0, 2) === companyStateCode);
+    } else if (partyState && partyState.trim()) {
+      isIntraState = (partyState.trim().toLowerCase() === companyState);
+    }
+  }
 
   let cgst = 0, sgst = 0, igst = 0;
   if (isIntraState) {
@@ -2246,6 +2258,7 @@ app.post('/api/transactions/purchases', async (req, res) => {
       managerName = 'Admin',
       managerId = null,
       deviceId = '',
+      isInterState: reqIsInterState,
       items, // Array of { rawMaterialId, quantity, unit, rate, discount, hsnCode, gstPercent }
       rawMaterialId, quantityKg, ratePerKg, gstPercent // legacy fallback
     } = req.body;
@@ -2271,6 +2284,7 @@ app.post('/api/transactions/purchases', async (req, res) => {
     const partyState = supp.state || 'Gujarat';
     const partyGstin = supp.gst_number || '';
     const isGST = (purchaseType === 'GST');
+    const isInterState = reqIsInterState !== undefined && reqIsInterState !== null ? Boolean(reqIsInterState) : null;
 
     let totalTaxable = 0;
     let totalCgst = 0;
@@ -2294,7 +2308,7 @@ app.post('/api/transactions/purchases', async (req, res) => {
 
       const lineTaxable = Number(((q * r) - disc).toFixed(2));
       const lineGstPct = isGST ? Number(it.gstPercent !== undefined ? it.gstPercent : (rm.gst_percent || 18)) : 0;
-      const gstData = isGST ? calculateGstBreakdown({ taxableAmount: lineTaxable, gstPercent: lineGstPct, partyState, partyGstin }) : { cgstAmount: 0, sgstAmount: 0, igstAmount: 0, totalGst: 0, grandTotal: lineTaxable };
+      const gstData = isGST ? calculateGstBreakdown({ taxableAmount: lineTaxable, gstPercent: lineGstPct, partyState, partyGstin, isInterState }) : { cgstAmount: 0, sgstAmount: 0, igstAmount: 0, totalGst: 0, grandTotal: lineTaxable };
 
       totalTaxable += lineTaxable;
       totalCgst += gstData.cgstAmount;
@@ -2322,15 +2336,37 @@ app.post('/api/transactions/purchases', async (req, res) => {
     const billDiscount = Number(discountAmount || 0);
     const billOther = Number(otherCharges || 0);
     const billRound = Number(roundOff || 0);
+
     const validElCharges = Array.isArray(elCharges)
-      ? elCharges.filter(c => c && c.label && Number(c.amount) > 0).map(c => ({
-          id: c.id || Date.now(),
-          label: String(c.label).trim(),
-          amount: Number(c.amount)
-        }))
+      ? elCharges.filter(c => c && c.label && Number(c.amount) > 0).map(c => {
+          const amt = Number(Number(c.amount).toFixed(2));
+          const chargeGstPct = isGST ? Number(c.gstPercent !== undefined ? c.gstPercent : 18) : 0;
+          const chargeGstData = isGST
+            ? calculateGstBreakdown({ taxableAmount: amt, gstPercent: chargeGstPct, partyState, partyGstin, isInterState })
+            : { cgstAmount: 0, sgstAmount: 0, igstAmount: 0, totalGst: 0, grandTotal: amt };
+          return {
+            id: c.id || Date.now(),
+            label: String(c.label).trim(),
+            amount: amt,
+            gstPercent: chargeGstPct,
+            taxableAmount: amt,
+            gstAmount: chargeGstData.totalGst,
+            cgstAmount: chargeGstData.cgstAmount,
+            sgstAmount: chargeGstData.sgstAmount,
+            igstAmount: chargeGstData.igstAmount,
+            totalAmount: chargeGstData.grandTotal
+          };
+        })
       : [];
-    const totalElCharges = validElCharges.reduce((acc, c) => acc + c.amount, 0);
-    const grandTotal = Number((totalTaxable + totalCgst + totalSgst + totalIgst + billOther + totalElCharges - billDiscount + billRound).toFixed(2));
+
+    for (const c of validElCharges) {
+      totalTaxable = Number((totalTaxable + c.taxableAmount).toFixed(2));
+      totalCgst = Number((totalCgst + c.cgstAmount).toFixed(2));
+      totalSgst = Number((totalSgst + c.sgstAmount).toFixed(2));
+      totalIgst = Number((totalIgst + c.igstAmount).toFixed(2));
+    }
+
+    const grandTotal = Number((totalTaxable + totalCgst + totalSgst + totalIgst + billOther - billDiscount + billRound).toFixed(2));
 
     const finalManagerName = (req.role === 'manager' && req.manager) ? req.manager.name : (managerName || 'Admin');
     const finalManagerId = (req.role === 'manager' && req.manager) ? req.manager.id : (managerId || null);
@@ -2466,6 +2502,7 @@ app.put('/api/transactions/purchases/:id', requireAdmin, async (req, res) => {
       roundOff = 0,
       elCharges = [],
       remarks = '',
+      isInterState: reqIsInterState,
       items
     } = req.body;
 
@@ -2493,6 +2530,7 @@ app.put('/api/transactions/purchases/:id', requireAdmin, async (req, res) => {
     const partyState = supp.state || 'Gujarat';
     const partyGstin = supp.gst_number || '';
     const isGST = (purchaseType === 'GST');
+    const isInterState = reqIsInterState !== undefined && reqIsInterState !== null ? Boolean(reqIsInterState) : null;
 
     let totalTaxable = 0;
     let totalCgst = 0;
@@ -2516,7 +2554,7 @@ app.put('/api/transactions/purchases/:id', requireAdmin, async (req, res) => {
 
       const lineTaxable = Number(((q * r) - disc).toFixed(2));
       const lineGstPct = isGST ? Number(it.gstPercent !== undefined ? it.gstPercent : (rm.gst_percent || 18)) : 0;
-      const gstData = isGST ? calculateGstBreakdown({ taxableAmount: lineTaxable, gstPercent: lineGstPct, partyState, partyGstin }) : { cgstAmount: 0, sgstAmount: 0, igstAmount: 0, totalGst: 0, grandTotal: lineTaxable };
+      const gstData = isGST ? calculateGstBreakdown({ taxableAmount: lineTaxable, gstPercent: lineGstPct, partyState, partyGstin, isInterState }) : { cgstAmount: 0, sgstAmount: 0, igstAmount: 0, totalGst: 0, grandTotal: lineTaxable };
 
       totalTaxable += lineTaxable;
       totalCgst += gstData.cgstAmount;
@@ -2544,15 +2582,37 @@ app.put('/api/transactions/purchases/:id', requireAdmin, async (req, res) => {
     const billDiscount = Number(discountAmount || 0);
     const billOther = Number(otherCharges || 0);
     const billRound = Number(roundOff || 0);
+
     const validElCharges = Array.isArray(elCharges)
-      ? elCharges.filter(c => c && c.label && Number(c.amount) > 0).map(c => ({
-          id: c.id || Date.now(),
-          label: String(c.label).trim(),
-          amount: Number(c.amount)
-        }))
+      ? elCharges.filter(c => c && c.label && Number(c.amount) > 0).map(c => {
+          const amt = Number(Number(c.amount).toFixed(2));
+          const chargeGstPct = isGST ? Number(c.gstPercent !== undefined ? c.gstPercent : 18) : 0;
+          const chargeGstData = isGST
+            ? calculateGstBreakdown({ taxableAmount: amt, gstPercent: chargeGstPct, partyState, partyGstin, isInterState })
+            : { cgstAmount: 0, sgstAmount: 0, igstAmount: 0, totalGst: 0, grandTotal: amt };
+          return {
+            id: c.id || Date.now(),
+            label: String(c.label).trim(),
+            amount: amt,
+            gstPercent: chargeGstPct,
+            taxableAmount: amt,
+            gstAmount: chargeGstData.totalGst,
+            cgstAmount: chargeGstData.cgstAmount,
+            sgstAmount: chargeGstData.sgstAmount,
+            igstAmount: chargeGstData.igstAmount,
+            totalAmount: chargeGstData.grandTotal
+          };
+        })
       : [];
-    const totalElCharges = validElCharges.reduce((acc, c) => acc + c.amount, 0);
-    const grandTotal = Number((totalTaxable + totalCgst + totalSgst + totalIgst + billOther + totalElCharges - billDiscount + billRound).toFixed(2));
+
+    for (const c of validElCharges) {
+      totalTaxable = Number((totalTaxable + c.taxableAmount).toFixed(2));
+      totalCgst = Number((totalCgst + c.cgstAmount).toFixed(2));
+      totalSgst = Number((totalSgst + c.sgstAmount).toFixed(2));
+      totalIgst = Number((totalIgst + c.igstAmount).toFixed(2));
+    }
+
+    const grandTotal = Number((totalTaxable + totalCgst + totalSgst + totalIgst + billOther - billDiscount + billRound).toFixed(2));
 
     const result = await runTransaction(async () => {
       // 1. Reverse previous stock movements
