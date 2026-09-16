@@ -4,7 +4,8 @@ import {
   Plus, Clock, FileText, UserCheck, Layers, ClipboardList,
   ArrowDownLeft, ArrowUpRight, CreditCard, Printer, ShieldCheck,
   BookOpen, Download, MessageCircle, Cpu, Building2, Search, CheckCircle2,
-  AlertCircle, Eye, Share2, Send, X, AlertTriangle, ChevronDown, CalendarDays
+  AlertCircle, Eye, Share2, Send, X, AlertTriangle, ChevronDown, CalendarDays,
+  DollarSign
 } from 'lucide-react';
 import { api, session } from '../../api';
 
