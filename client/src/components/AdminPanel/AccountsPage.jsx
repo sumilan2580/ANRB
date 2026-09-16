@@ -76,11 +76,14 @@ function ConfirmDeleteModal({ isOpen, itemLabel, onClose, onConfirm, loading }) 
 }
 
 // ── Add Payment Modal ─────────────────────────────────────────────────────────
-function AddPaymentModal({ isOpen, initialPayment, customers, suppliers, defaultPartyType, defaultPartyId, onClose, onSuccess }) {
+function AddPaymentModal({ isOpen, initialPayment, customers, suppliers, expenseHeads: propExpenseHeads, bankAccounts: propBankAccounts, defaultPartyType, defaultPartyId, onClose, onSuccess }) {
+  const [internalExpenseHeads, setInternalExpenseHeads] = useState([]);
+  const [internalBankAccounts, setInternalBankAccounts] = useState([]);
   const [form, setForm] = useState({
     date: new Date().toISOString().split('T')[0],
     partyType: defaultPartyType || 'CUSTOMER',
     partyId: defaultPartyId || '',
+    bankAccountId: '',
     amount: '',
     paymentMode: 'Bank',
     referenceNo: '',
@@ -91,11 +94,26 @@ function AddPaymentModal({ isOpen, initialPayment, customers, suppliers, default
 
   useEffect(() => {
     if (isOpen) {
+      if (!propExpenseHeads || propExpenseHeads.length === 0) {
+        api.getExpenseHeads().then(setInternalExpenseHeads).catch(() => {});
+      }
+      if (!propBankAccounts || propBankAccounts.length === 0) {
+        api.getBankAccounts().then(setInternalBankAccounts).catch(() => {});
+      }
+    }
+  }, [isOpen, propExpenseHeads, propBankAccounts]);
+
+  const expenseHeads = (propExpenseHeads && propExpenseHeads.length > 0) ? propExpenseHeads : internalExpenseHeads;
+  const bankAccounts = (propBankAccounts && propBankAccounts.length > 0) ? propBankAccounts : internalBankAccounts;
+
+  useEffect(() => {
+    if (isOpen) {
       if (initialPayment) {
         setForm({
           date: initialPayment.date || new Date().toISOString().split('T')[0],
           partyType: initialPayment.party_type || defaultPartyType || 'CUSTOMER',
           partyId: initialPayment.party_id || defaultPartyId || '',
+          bankAccountId: initialPayment.bank_account_id || '',
           amount: initialPayment.amount || '',
           paymentMode: initialPayment.payment_mode || 'Bank',
           referenceNo: initialPayment.reference_no || '',
@@ -106,6 +124,7 @@ function AddPaymentModal({ isOpen, initialPayment, customers, suppliers, default
           date: new Date().toISOString().split('T')[0],
           partyType: defaultPartyType || 'CUSTOMER',
           partyId: defaultPartyId || '',
+          bankAccountId: '',
           amount: '',
           paymentMode: 'Bank',
           referenceNo: '',
@@ -118,12 +137,28 @@ function AddPaymentModal({ isOpen, initialPayment, customers, suppliers, default
 
   if (!isOpen) return null;
 
-  const partyList = form.partyType === 'CUSTOMER' ? customers : suppliers;
+  let partyList = [];
+  let partyLabel = 'Party';
+  if (form.partyType === 'CUSTOMER') {
+    partyList = customers || [];
+    partyLabel = 'Customer';
+  } else if (form.partyType === 'SUPPLIER') {
+    partyList = suppliers || [];
+    partyLabel = 'Supplier';
+  } else if (form.partyType === 'EXPENSE') {
+    partyList = expenseHeads.filter(h => (h.type || 'EXPENSE') === 'EXPENSE' && h.status !== 'INACTIVE');
+    partyLabel = 'Expense Head';
+  } else if (form.partyType === 'INCOME') {
+    partyList = expenseHeads.filter(h => h.type === 'INCOME' && h.status !== 'INACTIVE');
+    partyLabel = 'Income Head';
+  }
+
+  const isReceipt = form.partyType === 'CUSTOMER' || form.partyType === 'INCOME';
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!form.partyId || !form.amount || Number(form.amount) <= 0) {
-      return setError('Party and a valid amount are required.');
+      return setError('Party / Head and a valid amount are required.');
     }
     try {
       setLoading(true); setError('');
@@ -131,6 +166,7 @@ function AddPaymentModal({ isOpen, initialPayment, customers, suppliers, default
         date: form.date,
         partyType: form.partyType,
         partyId: Number(form.partyId),
+        bankAccountId: form.paymentMode === 'Cash' ? null : (form.bankAccountId ? Number(form.bankAccountId) : null),
         amount: Number(form.amount),
         paymentMode: form.paymentMode,
         referenceNo: form.referenceNo,
@@ -152,12 +188,18 @@ function AddPaymentModal({ isOpen, initialPayment, customers, suppliers, default
 
   return (
     <div className="modal-overlay">
-      <div className="modal-content" style={{ maxWidth: '480px' }}>
+      <div className="modal-content" style={{ maxWidth: '500px' }}>
         <div className="modal-header">
           <h3>
             {initialPayment
-              ? `Edit ${initialPayment.party_type === 'CUSTOMER' ? 'Receipt' : 'Payment'} (${initialPayment.payment_code})`
-              : form.partyType === 'CUSTOMER' ? '+ Record Receipt' : '+ Record Payment'}
+              ? `Edit ${isReceipt ? 'Receipt' : 'Payment'} (${initialPayment.payment_code})`
+              : form.partyType === 'CUSTOMER'
+                ? '+ Record Customer Receipt'
+                : form.partyType === 'INCOME'
+                  ? '+ Record Side Income Receipt'
+                  : form.partyType === 'EXPENSE'
+                    ? '+ Record Expense Payment'
+                    : '+ Record Supplier Payment'}
           </h3>
           <button className="modal-close-btn" onClick={onClose}>×</button>
         </div>
@@ -174,48 +216,67 @@ function AddPaymentModal({ isOpen, initialPayment, customers, suppliers, default
                 <input type="date" className="form-input" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} required />
               </div>
               <div className="form-group">
-                <label className="form-label">Party Type *</label>
+                <label className="form-label">Transaction Type *</label>
                 <select className="form-select" value={form.partyType} onChange={e => setForm({ ...form, partyType: e.target.value, partyId: '' })}>
                   <option value="CUSTOMER">Customer (Receipt)</option>
                   <option value="SUPPLIER">Supplier (Payment)</option>
+                  <option value="EXPENSE">Expense (Daily / Factory Payment)</option>
+                  <option value="INCOME">Side Income (Scrap / Other Receipt)</option>
                 </select>
               </div>
               <div className="form-group full-width">
-                <label className="form-label">{form.partyType === 'CUSTOMER' ? 'Customer' : 'Supplier'} *</label>
+                <label className="form-label">{partyLabel} *</label>
                 <select className="form-select" value={form.partyId} onChange={e => setForm({ ...form, partyId: e.target.value })} required>
-                  <option value="">Select party…</option>
-                  {partyList.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  <option value="">Select {partyLabel.toLowerCase()}…</option>
+                  {partyList.map(p => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} {p.code ? `(${p.code})` : ''} {p.category ? `— ${p.category}` : ''}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div className="form-group">
                 <label className="form-label">Amount (₹) *</label>
-                <input type="number" className="form-input" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} placeholder="e.g. 50000" required min="0.01" step="0.01" />
+                <input type="number" className="form-input" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} placeholder="e.g. 5000" required min="0.01" step="0.01" />
               </div>
               <div className="form-group">
-                <label className="form-label">Mode *</label>
+                <label className="form-label">Payment Mode *</label>
                 <select className="form-select" value={form.paymentMode} onChange={e => setForm({ ...form, paymentMode: e.target.value })}>
                   <option value="Bank">Bank Transfer</option>
-                  <option value="Cash">Cash</option>
-                  <option value="Cheque">Cheque</option>
+                  <option value="Cash">Cash in Hand</option>
                   <option value="UPI">UPI</option>
+                  <option value="Cheque">Cheque</option>
                   <option value="NEFT">NEFT</option>
                   <option value="RTGS">RTGS</option>
                 </select>
               </div>
+              {form.paymentMode !== 'Cash' && (
+                <div className="form-group full-width">
+                  <label className="form-label">Bank Account (Optional)</label>
+                  <select className="form-select" value={form.bankAccountId} onChange={e => setForm({ ...form, bankAccountId: e.target.value })}>
+                    <option value="">Select Bank Account (Default Primary)…</option>
+                    {bankAccounts.map(b => (
+                      <option key={b.id} value={b.id}>
+                        {b.bank_name || b.account_name} — A/C: {b.account_number || b.bank_account_no} {b.is_primary ? '★ Primary' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div className="form-group">
-                <label className="form-label">Reference / Cheque #</label>
-                <input type="text" className="form-input" value={form.referenceNo} onChange={e => setForm({ ...form, referenceNo: e.target.value })} placeholder="UTR / Cheque No." />
+                <label className="form-label">Reference / UTR / Cheque #</label>
+                <input type="text" className="form-input" value={form.referenceNo} onChange={e => setForm({ ...form, referenceNo: e.target.value })} placeholder="UTR / Voucher / Cheque No." />
               </div>
               <div className="form-group full-width">
-                <label className="form-label">Remarks</label>
-                <input type="text" className="form-input" value={form.remarks} onChange={e => setForm({ ...form, remarks: e.target.value })} placeholder="Optional note" />
+                <label className="form-label">Remarks / Description</label>
+                <input type="text" className="form-input" value={form.remarks} onChange={e => setForm({ ...form, remarks: e.target.value })} placeholder="e.g. Factory tea, diesel, scrap sale slip..." />
               </div>
             </div>
           </div>
           <div className="modal-footer">
             <button type="button" className="btn btn-outline" onClick={onClose} disabled={loading}>Cancel</button>
             <button type="submit" className="btn btn-primary" disabled={loading}>
-              {loading ? 'Saving...' : (form.partyType === 'CUSTOMER' ? 'Record Receipt' : 'Record Payment')}
+              {loading ? 'Saving...' : isReceipt ? 'Record Receipt' : 'Record Payment'}
             </button>
           </div>
         </form>
@@ -763,10 +824,12 @@ function PaymentsRegister({ customers, suppliers, onAddPayment, onEditPayment, r
     <div>
       {/* Filter Bar */}
       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '16px' }}>
-        <select className="form-select" style={{ width: '160px', padding: '7px 10px' }} value={filter.partyType} onChange={e => setFilter({ ...filter, partyType: e.target.value })}>
+        <select className="form-select" style={{ width: '170px', padding: '7px 10px' }} value={filter.partyType} onChange={e => setFilter({ ...filter, partyType: e.target.value })}>
           <option value="">All Types</option>
-          <option value="CUSTOMER">Receipts (Customer)</option>
-          <option value="SUPPLIER">Payments (Supplier)</option>
+          <option value="CUSTOMER">Customer Receipts</option>
+          <option value="SUPPLIER">Supplier Payments</option>
+          <option value="EXPENSE">Expense Payments</option>
+          <option value="INCOME">Side Incomes</option>
         </select>
         <select className="form-select" style={{ width: '140px', padding: '7px 10px' }} value={filter.mode} onChange={e => setFilter({ ...filter, mode: e.target.value })}>
           <option value="">All Modes</option>
@@ -802,7 +865,7 @@ function PaymentsRegister({ customers, suppliers, onAddPayment, onEditPayment, r
                 <th>Code</th>
                 <th>Date</th>
                 <th>Type</th>
-                <th>Party</th>
+                <th>Party / Head</th>
                 <th>Mode</th>
                 <th>Reference #</th>
                 <th style={{ textAlign: 'right' }}>Amount ₹</th>
@@ -813,26 +876,44 @@ function PaymentsRegister({ customers, suppliers, onAddPayment, onEditPayment, r
             <tbody>
               {payments.length === 0 ? (
                 <tr><td colSpan="9" style={{ textAlign: 'center', padding: '30px', color: 'var(--text-muted)' }}>No payment entries found</td></tr>
-              ) : payments.map(p => (
-                <tr key={p.id}>
-                  <td><span className={`pill ${p.party_type === 'CUSTOMER' ? 'pill-emerald' : 'pill-amber'} num-mono`} style={{ fontSize: '10px' }}>{p.payment_code}</span></td>
-                  <td>{p.date}</td>
-                  <td><span className={`pill ${p.party_type === 'CUSTOMER' ? 'pill-emerald' : 'pill-amber'}`} style={{ fontSize: '10px' }}>{p.party_type === 'CUSTOMER' ? 'Receipt' : 'Payment'}</span></td>
-                  <td style={{ fontWeight: '600' }}>{p.party_name}</td>
-                  <td><span className="pill pill-cyan" style={{ fontSize: '10px' }}>{p.payment_mode || 'Bank'}</span></td>
-                  <td style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{p.reference_no || '—'}</td>
-                  <td className="num-mono" style={{ textAlign: 'right', fontWeight: '700', color: p.party_type === 'CUSTOMER' ? 'var(--emerald)' : 'var(--amber)' }}>
-                    {fmtINR(p.amount)}
-                  </td>
-                  <td style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{p.remarks || '—'}</td>
-                  <td>
-                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                      <ActionBtn icon={<Edit2 size={12} />} color="var(--blue)" title="Edit" onClick={() => onEditPayment && onEditPayment(p)} />
-                      <ActionBtn icon={<Trash2 size={12} />} color="var(--rose)" title="Delete" onClick={() => setDeleteTarget({ id: p.id, label: p.payment_code })} />
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              ) : payments.map(p => {
+                const isIncome = p.party_type === 'CUSTOMER' || p.party_type === 'INCOME';
+                const typeBadge = p.party_type === 'CUSTOMER'
+                  ? 'pill-emerald'
+                  : p.party_type === 'INCOME'
+                    ? 'pill-emerald'
+                    : p.party_type === 'EXPENSE'
+                      ? 'pill-rose'
+                      : 'pill-amber';
+                const typeLabel = p.party_type === 'CUSTOMER'
+                  ? 'Customer Receipt'
+                  : p.party_type === 'INCOME'
+                    ? 'Side Income'
+                    : p.party_type === 'EXPENSE'
+                      ? 'Expense'
+                      : 'Supplier Pmt';
+
+                return (
+                  <tr key={p.id}>
+                    <td><span className={`pill ${typeBadge} num-mono`} style={{ fontSize: '10px' }}>{p.payment_code}</span></td>
+                    <td>{p.date}</td>
+                    <td><span className={`pill ${typeBadge}`} style={{ fontSize: '10px' }}>{typeLabel}</span></td>
+                    <td style={{ fontWeight: '600' }}>{p.party_name}</td>
+                    <td><span className="pill pill-cyan" style={{ fontSize: '10px' }}>{p.payment_mode || 'Bank'}</span></td>
+                    <td style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{p.reference_no || '—'}</td>
+                    <td className="num-mono" style={{ textAlign: 'right', fontWeight: '700', color: isIncome ? 'var(--emerald)' : 'var(--rose)' }}>
+                      {fmtINR(p.amount)}
+                    </td>
+                    <td style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{p.remarks || '—'}</td>
+                    <td>
+                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                        <ActionBtn icon={<Edit2 size={12} />} color="var(--blue)" title="Edit" onClick={() => onEditPayment && onEditPayment(p)} />
+                        <ActionBtn icon={<Trash2 size={12} />} color="var(--rose)" title="Delete" onClick={() => setDeleteTarget({ id: p.id, label: p.payment_code })} />
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -845,6 +926,255 @@ function PaymentsRegister({ customers, suppliers, onAddPayment, onEditPayment, r
       </div>
 
       <ConfirmDeleteModal isOpen={!!deleteTarget} itemLabel={deleteTarget?.label} onClose={() => setDeleteTarget(null)} onConfirm={handleDelete} loading={deleteLoading} />
+    </div>
+  );
+}
+
+// ── EXPENSE & INCOME LEDGER SUB-COMPONENT ────────────────────────────────────
+function ExpenseLedgerView({ onAddPayment }) {
+  const [expenseHeads, setExpenseHeads] = useState([]);
+  const [selectedHeadId, setSelectedHeadId] = useState('');
+  const [typeFilter, setTypeFilter] = useState(''); // '' for all, 'EXPENSE', 'INCOME'
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [ledger, setLedger] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const loadHeads = async () => {
+    try {
+      const data = await api.getExpenseHeads();
+      setExpenseHeads(data || []);
+      if (data && data.length > 0 && !selectedHeadId) {
+        setSelectedHeadId(String(data[0].id));
+      }
+    } catch {}
+  };
+
+  useEffect(() => { loadHeads(); }, []);
+
+  const loadLedger = async () => {
+    if (!selectedHeadId) return setError('Please select an Expense or Income head.');
+    setLoading(true); setError('');
+    try {
+      const data = await api.getExpenseLedger(selectedHeadId, dateFrom, dateTo, typeFilter);
+      setLedger(data);
+    } catch (err) {
+      setError(err.message || 'Failed to load expense ledger');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedHeadId) {
+      loadLedger();
+    }
+  }, [selectedHeadId, typeFilter]);
+
+  const filteredHeads = typeFilter
+    ? expenseHeads.filter(h => h.type === typeFilter)
+    : expenseHeads;
+
+  const handlePrint = () => {
+    if (!ledger || !ledger.head) return;
+    const win = window.open('', '_blank');
+    const h = ledger.head;
+    const isInc = h.type === 'INCOME';
+    const rows = (ledger.transactions || []).map(t => `
+      <tr>
+        <td>${t.date}</td>
+        <td>${t.doc_no || '—'}</td>
+        <td>${t.payment_mode || 'Bank'}</td>
+        <td>${t.bank_name || (t.payment_mode === 'Cash' ? 'Cash in Hand' : '—')}</td>
+        <td>${t.reference_no || '—'}</td>
+        <td>${t.description || '—'}</td>
+        <td style="text-align:right;font-weight:700;color:${isInc ? '#2e7d32' : '#c62828'}">₹${Number(t.amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+      </tr>
+    `).join('');
+
+    win.document.write(`<html><head><title>Ledger — ${h.name}</title>
+      <style>* { box-sizing:border-box; } body { font-family:Arial; margin:20px; font-size:12px; }
+      h2 { color:#1a237e; margin-bottom:4px; } table { width:100%; border-collapse:collapse; margin-top:14px; }
+      th { background:#1a237e; color:#fff; padding:8px; text-align:left; } td { padding:7px; border-bottom:1px solid #ddd; }
+      .summary { display:flex; gap:16px; margin:14px 0; }
+      .sum-box { flex:1; border:1px solid #ccc; padding:10px; border-radius:4px; }
+      @media print { * { -webkit-print-color-adjust: exact; } }
+      </style></head><body>
+      <h2>${isInc ? 'Income Ledger' : 'Expense Ledger'} — ${h.name} (${h.code})</h2>
+      <p style="color:#555;">Category: <strong>${h.category || 'General'}</strong> | Type: <strong>${h.type}</strong></p>
+      ${(dateFrom || dateTo) ? `<p>Period: ${dateFrom || 'Beginning'} to ${dateTo || 'Today'}</p>` : ''}
+      <div class="summary">
+        <div class="sum-box"><div style="font-size:10px;color:#666;text-transform:uppercase">Total ${isInc ? 'Received' : 'Incurred'}</div><div style="font-size:16px;font-weight:700;color:${isInc ? '#2e7d32' : '#c62828'}">₹${(ledger.summary?.totalIncurred || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div></div>
+        <div class="sum-box"><div style="font-size:10px;color:#666;text-transform:uppercase">Cash ${isInc ? 'Inflow' : 'Outflow'}</div><div style="font-size:16px;font-weight:700">₹${(ledger.summary?.totalCash || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div></div>
+        <div class="sum-box"><div style="font-size:10px;color:#666;text-transform:uppercase">Bank ${isInc ? 'Inflow' : 'Outflow'}</div><div style="font-size:16px;font-weight:700">₹${(ledger.summary?.totalBank || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div></div>
+        <div class="sum-box"><div style="font-size:10px;color:#666;text-transform:uppercase">Total Vouchers</div><div style="font-size:16px;font-weight:700">${ledger.summary?.totalCount || 0}</div></div>
+      </div>
+      <table>
+        <thead><tr><th>Date</th><th>Voucher #</th><th>Mode</th><th>Account</th><th>Ref / Cheque #</th><th>Remarks</th><th style="text-align:right">Amount (₹)</th></tr></thead>
+        <tbody>${rows.length > 0 ? rows : '<tr><td colspan="7" style="text-align:center;padding:20px;">No entries recorded</td></tr>'}</tbody>
+      </table>
+      </body></html>`);
+    win.document.close();
+    win.focus();
+    setTimeout(() => { win.print(); win.close(); }, 400);
+  };
+
+  const isIncomeHead = ledger?.head?.type === 'INCOME';
+
+  return (
+    <div>
+      {/* Controls */}
+      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '18px', background: 'var(--bg-card)', padding: '14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+        <div style={{ minWidth: '130px' }}>
+          <label className="form-label" style={{ display: 'block', marginBottom: '4px' }}>Head Type</label>
+          <select className="form-select" value={typeFilter} onChange={e => { setTypeFilter(e.target.value); }}>
+            <option value="">All (Expense & Income)</option>
+            <option value="EXPENSE">Expenses Only</option>
+            <option value="INCOME">Incomes Only</option>
+          </select>
+        </div>
+        <div style={{ flex: '1', minWidth: '220px' }}>
+          <label className="form-label" style={{ display: 'block', marginBottom: '4px' }}>Expense / Income Head *</label>
+          <select className="form-select" value={selectedHeadId} onChange={e => { setSelectedHeadId(e.target.value); setLedger(null); }}>
+            <option value="">Select Expense / Income Head…</option>
+            {filteredHeads.map(h => (
+              <option key={h.id} value={h.id}>
+                [{h.code}] {h.name} — {h.category} ({h.type})
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="form-label" style={{ display: 'block', marginBottom: '4px' }}>From</label>
+          <input type="date" className="form-input" style={{ padding: '7px 10px' }} value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+        </div>
+        <div>
+          <label className="form-label" style={{ display: 'block', marginBottom: '4px' }}>To</label>
+          <input type="date" className="form-input" style={{ padding: '7px 10px' }} value={dateTo} onChange={e => setDateTo(e.target.value)} />
+        </div>
+        <button className="btn btn-primary" onClick={loadLedger} disabled={!selectedHeadId || loading}>
+          {loading ? <RefreshCw size={14} className="animate-spin" /> : <BookOpen size={14} />} View Statement
+        </button>
+        {ledger && (
+          <>
+            <button className="btn btn-outline" onClick={handlePrint}><Printer size={14} /> Print</button>
+            <button className="btn btn-outline" onClick={() => exportCSV(ledger.transactions, `${ledger.head?.code || 'expense'}-ledger.csv`)}><Download size={14} /> Export</button>
+          </>
+        )}
+        <button
+          className="btn btn-outline"
+          style={{ marginLeft: 'auto', borderColor: 'var(--emerald)', color: 'var(--emerald)' }}
+          onClick={() => onAddPayment && onAddPayment(isIncomeHead ? 'INCOME' : 'EXPENSE', selectedHeadId)}
+        >
+          <Plus size={14} /> {isIncomeHead ? '+ Record Income' : '+ Record Expense'}
+        </button>
+      </div>
+
+      {error && <div style={{ background: 'var(--rose-bg)', border: '1px solid var(--rose)', color: 'var(--rose)', padding: '10px 14px', borderRadius: '8px', marginBottom: '14px', fontSize: '13px' }}>{error}</div>}
+
+      {ledger && ledger.head && (
+        <>
+          {/* Head Info Card */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '14px 20px', marginBottom: '16px' }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '800' }}>{ledger.head.name}</h3>
+                <span className={`pill ${isIncomeHead ? 'pill-emerald' : 'pill-rose'}`} style={{ fontSize: '11px' }}>
+                  {ledger.head.type}
+                </span>
+                <span className="pill pill-blue num-mono" style={{ fontSize: '11px' }}>{ledger.head.code}</span>
+              </div>
+              <p style={{ margin: '4px 0 0', color: 'var(--text-muted)', fontSize: '12px' }}>
+                Category: <strong>{ledger.head.category || 'General'}</strong> {ledger.head.description ? `• ${ledger.head.description}` : ''}
+              </p>
+            </div>
+            {(dateFrom || dateTo) && (
+              <div style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'right' }}>
+                Period: <strong>{dateFrom || 'Beginning'}</strong> to <strong>{dateTo || 'Today'}</strong>
+              </div>
+            )}
+          </div>
+
+          {/* KPI Summary Cards */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px', marginBottom: '16px' }}>
+            <div className="stat-card" style={{ padding: '16px' }}>
+              <div style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+                Total {isIncomeHead ? 'Income (Receipts)' : 'Expense (Payments)'}
+              </div>
+              <div style={{ fontSize: '20px', fontWeight: '800', color: isIncomeHead ? 'var(--emerald)' : 'var(--rose)', marginTop: '4px' }}>
+                {fmtINR(ledger.summary?.totalIncurred || 0)}
+              </div>
+            </div>
+            <div className="stat-card" style={{ padding: '16px' }}>
+              <div style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+                Cash {isIncomeHead ? 'Inflow' : 'Outflow'}
+              </div>
+              <div style={{ fontSize: '20px', fontWeight: '800', color: 'var(--amber)', marginTop: '4px' }}>
+                {fmtINR(ledger.summary?.totalCash || 0)}
+              </div>
+            </div>
+            <div className="stat-card" style={{ padding: '16px' }}>
+              <div style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+                Bank {isIncomeHead ? 'Inflow' : 'Outflow'}
+              </div>
+              <div style={{ fontSize: '20px', fontWeight: '800', color: '#38bdf8', marginTop: '4px' }}>
+                {fmtINR(ledger.summary?.totalBank || 0)}
+              </div>
+            </div>
+            <div className="stat-card" style={{ padding: '16px' }}>
+              <div style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+                Total Vouchers
+              </div>
+              <div style={{ fontSize: '20px', fontWeight: '800', marginTop: '4px' }}>
+                {ledger.summary?.totalCount || 0}
+              </div>
+            </div>
+          </div>
+
+          {/* Transactions Table */}
+          <div className="table-container">
+            <table className="custom-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Voucher #</th>
+                  <th>Mode</th>
+                  <th>Bank / Account</th>
+                  <th>Reference / Cheque #</th>
+                  <th>Remarks / Description</th>
+                  <th style={{ textAlign: 'right' }}>Amount ₹</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!ledger.transactions || ledger.transactions.length === 0 ? (
+                  <tr><td colSpan="7" style={{ textAlign: 'center', padding: '30px', color: 'var(--text-muted)' }}>No expense / payment entries recorded in this period.</td></tr>
+                ) : ledger.transactions.map((t, i) => (
+                  <tr key={t.id || i}>
+                    <td>{t.date}</td>
+                    <td><span className={`pill ${isIncomeHead ? 'pill-emerald' : 'pill-rose'} num-mono`} style={{ fontSize: '10px' }}>{t.doc_no || '—'}</span></td>
+                    <td><span className="pill pill-cyan" style={{ fontSize: '10px' }}>{t.payment_mode || 'Bank'}</span></td>
+                    <td style={{ fontSize: '12px' }}>{t.bank_name || (t.payment_mode === 'Cash' ? 'Cash in Hand' : '—')}</td>
+                    <td style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{t.reference_no || '—'}</td>
+                    <td style={{ fontSize: '12px' }}>{t.description || '—'}</td>
+                    <td className="num-mono" style={{ textAlign: 'right', fontWeight: '700', color: isIncomeHead ? 'var(--emerald)' : 'var(--rose)' }}>
+                      {fmtINR(t.amount)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {ledger.transactions && ledger.transactions.length > 0 && (
+              <div style={{ padding: '10px 16px', background: 'var(--bg-card)', borderTop: '2px solid var(--border-color)', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '24px', fontWeight: '700', fontSize: '13px' }}>
+                <span style={{ color: 'var(--text-muted)', fontWeight: '400' }}>Total {ledger.transactions.length} Vouchers:</span>
+                <span style={{ color: isIncomeHead ? 'var(--emerald)' : 'var(--rose)', fontSize: '16px' }}>
+                  {fmtINR(ledger.summary?.totalIncurred || 0)}
+                </span>
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -1840,6 +2170,7 @@ const TABS = [
   { id: 'customer-ledger', label: 'Customer Ledger', icon: <Users size={14} /> },
   { id: 'supplier-ledger', label: 'Supplier Ledger', icon: <UserCheck size={14} /> },
   { id: 'cash-bank', label: 'Cash & Bank Books', icon: <DollarSign size={14} /> },
+  { id: 'expense-ledger', label: 'Expense & Income Ledger', icon: <TrendingDown size={14} /> },
   { id: 'outstanding', label: 'Outstanding Summaries', icon: <TrendingUp size={14} /> },
   { id: 'payments', label: 'Payments Register', icon: <CreditCard size={14} /> },
   { id: 'debit-credit-notes', label: 'Debit / Credit Notes', icon: <FileCheck size={14} /> },
@@ -1851,6 +2182,8 @@ export default function AccountsPage() {
   const [tab, setTab] = useState('customer-ledger');
   const [customers, setCustomers] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
+  const [expenseHeads, setExpenseHeads] = useState([]);
+  const [bankAccounts, setBankAccounts] = useState([]);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [editingPayment, setEditingPayment] = useState(null);
   const [paymentDefaultType, setPaymentDefaultType] = useState('CUSTOMER');
@@ -1860,6 +2193,8 @@ export default function AccountsPage() {
   useEffect(() => {
     api.getCustomers().then(setCustomers).catch(() => {});
     api.getSuppliers().then(setSuppliers).catch(() => {});
+    api.getExpenseHeads().then(setExpenseHeads).catch(() => {});
+    api.getBankAccounts && api.getBankAccounts().then(setBankAccounts).catch(() => {});
   }, []);
 
   const openAddPayment = (type = 'CUSTOMER', partyId = '') => {
@@ -1887,7 +2222,7 @@ export default function AccountsPage() {
       <div className="page-header">
         <div>
           <h2>Accounts & Ledger</h2>
-          <p>Customer / Supplier ledgers, Cash & Bank books, Outstanding summaries, and CA registers</p>
+          <p>Customer / Supplier ledgers, Expense / Income statements, Cash & Bank books, and CA registers</p>
         </div>
         <div className="header-actions">
           <button className="btn btn-primary" onClick={() => openAddPayment()}>
@@ -1930,6 +2265,9 @@ export default function AccountsPage() {
         />
       )}
       {tab === 'cash-bank' && <CashBankView />}
+      {tab === 'expense-ledger' && (
+        <ExpenseLedgerView onAddPayment={openAddPayment} />
+      )}
       {tab === 'outstanding' && <OutstandingView onSelectParty={handleSelectPartyFromOutstanding} />}
       {tab === 'payments' && (
         <PaymentsRegister
@@ -1954,6 +2292,8 @@ export default function AccountsPage() {
         initialPayment={editingPayment}
         customers={customers}
         suppliers={suppliers}
+        expenseHeads={expenseHeads}
+        bankAccounts={bankAccounts}
         defaultPartyType={paymentDefaultType}
         defaultPartyId={paymentDefaultPartyId}
         onClose={() => {

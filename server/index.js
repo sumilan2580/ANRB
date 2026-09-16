@@ -156,11 +156,40 @@ function numberToWords(num) {
 // For ALL write operations (PUT, PATCH, DELETE), manager role returns HTTP 403.
 // The backend enforces this; the frontend hiding is supplemental only.
 
+const ALL_MANAGER_MODULES = [
+  'orders', 'purchases', 'consumptions', 'productions', 'sales',
+  'payments', 'attendance', 'ledger', 'outstanding', 'masters'
+];
+
+function parsePermissions(raw) {
+  if (!raw) return [...ALL_MANAGER_MODULES];
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (Array.isArray(parsed)) return parsed;
+  } catch (_) {}
+  return [...ALL_MANAGER_MODULES];
+}
+
+function checkManagerModule(moduleKey, moduleName) {
+  return (req, res, next) => {
+    if (req.role === 'manager') {
+      const perms = req.managerPermissions || ALL_MANAGER_MODULES;
+      if (!perms.includes(moduleKey)) {
+        return res.status(403).json({
+          error: `Access Denied: You do not have permission to access "${moduleName}". Please contact your administrator.`
+        });
+      }
+    }
+    next();
+  };
+}
+
 async function authenticateRole(req, res, next) {
   // Support explicit x-user-role header for testing / API integration
   const overrideRole = req.headers['x-user-role'];
   if (overrideRole === 'manager') {
     req.role = 'manager';
+    req.managerPermissions = [...ALL_MANAGER_MODULES];
     if (['PUT', 'PATCH', 'DELETE'].includes(req.method)) {
       return res.status(403).json({
         error: 'Access denied. Managers have entry-only permission. Editing and deletion are restricted to Admin.'
@@ -189,6 +218,7 @@ async function authenticateRole(req, res, next) {
         ? await db.prepare('SELECT * FROM managers WHERE id = ?').get(user.manager_id)
         : await db.prepare('SELECT * FROM managers WHERE LOWER(name) = LOWER(?)').get(user.name);
       req.manager = mgr || { id: null, name: user.name, device_id: 'web', status: 'active' };
+      req.managerPermissions = parsePermissions(user.permissions || (mgr ? mgr.permissions : null));
       // Block ALL modification attempts by manager at API level
       if (['PUT', 'PATCH', 'DELETE'].includes(req.method)) {
         return res.status(403).json({
@@ -211,6 +241,7 @@ async function authenticateRole(req, res, next) {
     }
     req.role = 'manager';
     req.manager = manager;
+    req.managerPermissions = parsePermissions(manager.permissions);
     // Strict Manager Restriction: Manager is entry-only.
     // ANY attempt by manager to PUT, PATCH, or DELETE is unconditionally blocked with HTTP 403.
     if (['PUT', 'PATCH', 'DELETE'].includes(req.method)) {
@@ -284,9 +315,11 @@ app.post('/api/auth/login', async (req, res) => {
     let managerInfo = null;
     if (user.role === 'manager') {
       managerInfo = user.manager_id
-        ? await db.prepare('SELECT id, name, phone, status FROM managers WHERE id = ?').get(user.manager_id)
-        : await db.prepare('SELECT id, name, phone, status FROM managers WHERE LOWER(name) = LOWER(?)').get(user.name);
+        ? await db.prepare('SELECT id, name, phone, status, permissions FROM managers WHERE id = ?').get(user.manager_id)
+        : await db.prepare('SELECT id, name, phone, status, permissions FROM managers WHERE LOWER(name) = LOWER(?)').get(user.name);
     }
+
+    const effectivePermissions = parsePermissions(user.permissions || (managerInfo ? managerInfo.permissions : null));
 
     res.json({
       success: true,
@@ -297,7 +330,8 @@ app.post('/api/auth/login', async (req, res) => {
         name: user.name,
         role: user.role,  // 'admin' or 'manager'
         managerId: managerInfo ? managerInfo.id : null,
-        managerName: managerInfo ? managerInfo.name : (user.role === 'manager' ? user.name : null)
+        managerName: managerInfo ? managerInfo.name : (user.role === 'manager' ? user.name : null),
+        permissions: effectivePermissions
       }
     });
   } catch (err) {
@@ -323,18 +357,24 @@ app.post('/api/auth/logout', async (req, res) => {
 app.get('/api/auth/me', async (req, res) => {
   try {
     if (req.webUser) {
+      let permissions = null;
+      if (req.webUser.role === 'manager') {
+        permissions = req.managerPermissions || parsePermissions(req.webUser.permissions);
+      }
       return res.json({
         id: req.webUser.id,
         username: req.webUser.username,
         name: req.webUser.name,
-        role: req.webUser.role
+        role: req.webUser.role,
+        permissions
       });
     }
     if (req.manager) {
       return res.json({
         id: req.manager.id,
         name: req.manager.name,
-        role: 'manager'
+        role: 'manager',
+        permissions: parsePermissions(req.manager.permissions)
       });
     }
     res.json({ role: req.role || 'admin' });
@@ -346,7 +386,7 @@ app.get('/api/auth/me', async (req, res) => {
 // Admin: Create manager web login account
 app.post('/api/auth/create-manager-user', requireAdmin, async (req, res) => {
   try {
-    const { username, password, name, display_name, phone, managerId } = req.body;
+    const { username, password, name, display_name, phone, managerId, permissions } = req.body;
     const finalName = (name || display_name || username || '').trim();
     if (!username || !password || !finalName) {
       return res.status(400).json({ error: 'Username, password, and name are required' });
@@ -360,29 +400,31 @@ app.post('/api/auth/create-manager-user', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: `Username "${cleanUsername}" is already taken` });
     }
 
+    const permsJson = JSON.stringify(Array.isArray(permissions) && permissions.length > 0 ? permissions : ALL_MANAGER_MODULES);
+
     let resolvedManagerId = managerId || null;
     if (!resolvedManagerId) {
       // Find or create matching manager in managers table
       let mgr = await db.prepare('SELECT id FROM managers WHERE LOWER(name) = LOWER(?)').get(finalName);
       if (!mgr) {
         const infoMgr = await db.prepare(`
-          INSERT INTO managers (name, phone, device_id, status)
-          VALUES (?, ?, ?, 'active')
-        `).run(finalName, phone || '', 'WEB-' + cleanUsername.toUpperCase());
+          INSERT INTO managers (name, phone, device_id, status, permissions)
+          VALUES (?, ?, ?, 'active', ?)
+        `).run(finalName, phone || '', 'WEB-' + cleanUsername.toUpperCase(), permsJson);
         resolvedManagerId = infoMgr.lastInsertRowid;
       } else {
         resolvedManagerId = mgr.id;
-        if (phone) {
-          await db.prepare('UPDATE managers SET phone = ? WHERE id = ?').run(phone, mgr.id);
-        }
+        await db.prepare('UPDATE managers SET phone = COALESCE(?, phone), permissions = ? WHERE id = ?').run(phone || null, permsJson, mgr.id);
       }
+    } else {
+      await db.prepare('UPDATE managers SET permissions = ? WHERE id = ?').run(permsJson, resolvedManagerId);
     }
 
     const hashedPassword = hashPassword(password);
     const info = await db.prepare(`
-      INSERT INTO users (username, password, role, name, manager_id, status)
-      VALUES (?, ?, 'manager', ?, ?, 'active')
-    `).run(cleanUsername, hashedPassword, finalName, resolvedManagerId);
+      INSERT INTO users (username, password, role, name, manager_id, status, permissions)
+      VALUES (?, ?, 'manager', ?, ?, 'active', ?)
+    `).run(cleanUsername, hashedPassword, finalName, resolvedManagerId, permsJson);
 
     res.status(201).json({
       id: info.lastInsertRowid,
@@ -390,7 +432,8 @@ app.post('/api/auth/create-manager-user', requireAdmin, async (req, res) => {
       name: finalName,
       display_name: finalName,
       role: 'manager',
-      manager_id: resolvedManagerId
+      manager_id: resolvedManagerId,
+      permissions: parsePermissions(permsJson)
     });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -401,16 +444,44 @@ app.post('/api/auth/create-manager-user', requireAdmin, async (req, res) => {
 app.get('/api/auth/manager-users', requireAdmin, async (req, res) => {
   try {
     const rows = await db.prepare(`
-      SELECT u.id, u.username, u.name, u.name AS display_name, u.role, u.status, u.created_at, u.manager_id,
-             COALESCE(m.name, u.name) AS manager_name, m.phone, m.phone AS manager_phone
+      SELECT u.id, u.username, u.name, u.name AS display_name, u.role, u.status, u.created_at, u.manager_id, u.permissions,
+             COALESCE(m.name, u.name) AS manager_name, m.phone, m.phone AS manager_phone, m.permissions AS manager_perms
       FROM users u
       LEFT JOIN managers m ON u.manager_id = m.id
       WHERE u.role = 'manager'
       ORDER BY u.id ASC
     `).all();
-    res.json(rows);
+    const formatted = rows.map(r => ({
+      ...r,
+      permissions: parsePermissions(r.permissions || r.manager_perms)
+    }));
+    res.json(formatted);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin: Update manager web account permissions
+app.put('/api/auth/manager-users/:id/permissions', requireAdmin, async (req, res) => {
+  try {
+    const { permissions } = req.body;
+    if (!Array.isArray(permissions)) {
+      return res.status(400).json({ error: 'Permissions must be an array of module keys' });
+    }
+    const permsJson = JSON.stringify(permissions);
+    const user = await db.prepare('SELECT id, name, manager_id FROM users WHERE id = ? AND role = \'manager\'').get(req.params.id);
+    if (!user) return res.status(404).json({ error: 'Manager user not found' });
+
+    await db.prepare('UPDATE users SET permissions = ? WHERE id = ?').run(permsJson, req.params.id);
+    if (user.manager_id) {
+      await db.prepare('UPDATE managers SET permissions = ? WHERE id = ?').run(permsJson, user.manager_id);
+    } else if (user.name) {
+      await db.prepare('UPDATE managers SET permissions = ? WHERE LOWER(name) = LOWER(?)').run(permsJson, user.name);
+    }
+
+    res.json({ success: true, id: Number(req.params.id), permissions });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 });
 
@@ -726,7 +797,7 @@ app.get('/api/masters/raw-materials', async (req, res) => {
 });
 
 // POST: Both Admin and Manager can create raw materials (entry-only permission for Manager)
-app.post('/api/masters/raw-materials', async (req, res) => {
+app.post('/api/masters/raw-materials', checkManagerModule('masters', 'Masters'), async (req, res) => {
   try {
     const { name, category, unit = 'KG', minStockAlert = 1000, hsnCode = '3901', gstPercent = 18 } = req.body;
     if (!name || !category) {
@@ -815,7 +886,7 @@ app.get('/api/masters/finished-goods', async (req, res) => {
 });
 
 // POST: Both Admin and Manager can create finished goods (entry-only permission for Manager)
-app.post('/api/masters/finished-goods', async (req, res) => {
+app.post('/api/masters/finished-goods', checkManagerModule('masters', 'Masters'), async (req, res) => {
   try {
     const { productName = 'Tripal', gsm, widthSize, lengthVal, colour, grade = 'Grade A', unit = 'KG', minStockAlert = 500, hsnCode = '3926', gstPercent = 18 } = req.body;
     if (!gsm || !widthSize || !colour) {
@@ -907,7 +978,7 @@ app.get('/api/masters/customers', async (req, res) => {
 });
 
 // POST: Both Admin and Manager can create customers
-app.post('/api/masters/customers', async (req, res) => {
+app.post('/api/masters/customers', checkManagerModule('masters', 'Masters'), async (req, res) => {
   try {
     const {
       name,
@@ -1013,7 +1084,7 @@ app.get('/api/masters/suppliers', async (req, res) => {
 });
 
 // POST: Both Admin and Manager can create suppliers
-app.post('/api/masters/suppliers', async (req, res) => {
+app.post('/api/masters/suppliers', checkManagerModule('masters', 'Masters'), async (req, res) => {
   try {
     const {
       name,
@@ -1227,7 +1298,31 @@ app.get('/api/masters/managers', requireAdmin, async (req, res) => {
     FROM managers m
     ORDER BY m.id ASC
   `).all();
-  res.json(rows);
+  const formatted = rows.map(r => ({
+    ...r,
+    permissions: parsePermissions(r.permissions)
+  }));
+  res.json(formatted);
+});
+
+// Admin: Update floor manager permissions
+app.put('/api/masters/managers/:id/permissions', requireAdmin, async (req, res) => {
+  try {
+    const { permissions } = req.body;
+    if (!Array.isArray(permissions)) {
+      return res.status(400).json({ error: 'Permissions must be an array of module keys' });
+    }
+    const permsJson = JSON.stringify(permissions);
+    const mgr = await db.prepare('SELECT id, name FROM managers WHERE id = ?').get(req.params.id);
+    if (!mgr) return res.status(404).json({ error: 'Manager not found' });
+
+    await db.prepare('UPDATE managers SET permissions = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(permsJson, req.params.id);
+    await db.prepare("UPDATE users SET permissions = ? WHERE manager_id = ? OR (role = 'manager' AND LOWER(name) = LOWER(?))").run(permsJson, mgr.id, mgr.name);
+
+    res.json({ success: true, id: Number(req.params.id), permissions });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // Manager profile setup / sync from mobile device
@@ -1257,7 +1352,7 @@ app.put('/api/masters/managers/:id/status', requireAdmin, async (req, res) => {
 // Admin create manager directly
 app.post('/api/masters/managers', requireAdmin, async (req, res) => {
   try {
-    const { name, phone } = req.body;
+    const { name, phone, permissions } = req.body;
     if (!name || !name.trim()) {
       return res.status(400).json({ error: 'Manager name is required' });
     }
@@ -1266,13 +1361,14 @@ app.post('/api/masters/managers', requireAdmin, async (req, res) => {
     if (existing) {
       return res.status(400).json({ error: `Manager with name "${cleanName}" already exists.` });
     }
+    const permsJson = JSON.stringify(Array.isArray(permissions) && permissions.length > 0 ? permissions : ALL_MANAGER_MODULES);
     const token = 'mgr_' + cleanName.toLowerCase().replace(/[^a-z0-9]/g, '') + '_' + Math.random().toString(36).substring(2, 10);
     const devId = 'dev-' + Math.random().toString(36).substring(2, 8);
     const info = await db.prepare(`
-      INSERT INTO managers (name, device_id, phone, status, manager_token)
-      VALUES (?, ?, ?, 'active', ?)
-    `).run(cleanName, devId, phone || null, token);
-    res.status(201).json({ id: info.lastInsertRowid, name: cleanName, device_id: devId, phone, status: 'active', manager_token: token });
+      INSERT INTO managers (name, device_id, phone, status, manager_token, permissions)
+      VALUES (?, ?, ?, 'active', ?, ?)
+    `).run(cleanName, devId, phone || null, token, permsJson);
+    res.status(201).json({ id: info.lastInsertRowid, name: cleanName, device_id: devId, phone, status: 'active', manager_token: token, permissions: parsePermissions(permsJson) });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -1512,7 +1608,7 @@ app.get('/api/attendance', async (req, res) => {
 });
 
 // Bulk Attendance Save / Upsert
-app.post('/api/attendance/bulk', async (req, res) => {
+app.post('/api/attendance/bulk', checkManagerModule('attendance', 'Staff Attendance'), async (req, res) => {
   try {
     const { date, records, markedBy, marked_by } = req.body;
     if (!date) {
@@ -1759,6 +1855,136 @@ app.delete('/api/masters/bank-accounts/:id', requireAdmin, async (req, res) => {
   }
 });
 
+// =============================================================
+// EXPENSE & INCOME HEADS MASTER
+// =============================================================
+app.get('/api/masters/expense-heads', async (req, res) => {
+  try {
+    const { type, status } = req.query;
+    let query = 'SELECT * FROM expense_heads WHERE 1=1';
+    const params = [];
+    if (type) {
+      query += ' AND UPPER(type) = ?';
+      params.push(type.toUpperCase());
+    }
+    if (status) {
+      query += ' AND status = ?';
+      params.push(status);
+    }
+    query += ' ORDER BY type ASC, name ASC';
+    const rows = await db.prepare(query).all(...params);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/masters/expense-heads', checkManagerModule('masters', 'Masters'), async (req, res) => {
+  try {
+    const { name, type = 'EXPENSE', category = 'Direct Expense', description = '', status = 'active' } = req.body;
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'Expense/Income Head Name is required.' });
+    }
+    const cleanName = name.trim();
+    const cleanType = (type || 'EXPENSE').toUpperCase();
+    if (!['EXPENSE', 'INCOME'].includes(cleanType)) {
+      return res.status(400).json({ error: 'Type must be EXPENSE or INCOME.' });
+    }
+    const existing = await db.prepare('SELECT id FROM expense_heads WHERE LOWER(name) = LOWER(?) AND type = ?').get(cleanName, cleanType);
+    if (existing) {
+      return res.status(400).json({ error: `Head "${cleanName}" already exists for type ${cleanType}.` });
+    }
+
+    const prefix = cleanType === 'INCOME' ? 'INC' : 'EXP';
+    const code = await getNextCode(prefix, 'expense_heads', 'code');
+    const finalCreator = (req.role === 'manager' && req.manager) ? req.manager.name : 'Admin';
+
+    const info = await db.prepare(`
+      INSERT INTO expense_heads (code, name, type, category, status, description)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(code, cleanName, cleanType, category || (cleanType === 'INCOME' ? 'Side Income' : 'Direct Expense'), status || 'active', description || null);
+
+    const newId = info.lastInsertRowid;
+    await db.prepare(`
+      INSERT INTO audit_logs (entity_type, entity_id, action, new_values, performed_by)
+      VALUES (?, ?, 'CREATE', ?, ?)
+    `).run('EXPENSE_HEAD', code, JSON.stringify({ code, name: cleanName, type: cleanType, category }), finalCreator);
+
+    res.status(201).json({
+      id: newId,
+      code,
+      name: cleanName,
+      type: cleanType,
+      category,
+      status: status || 'active',
+      description
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.put('/api/masters/expense-heads/:id', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const head = await db.prepare('SELECT * FROM expense_heads WHERE id = ?').get(id);
+    if (!head) return res.status(404).json({ error: 'Expense/Income head not found.' });
+
+    const { name, type, category, description, status } = req.body;
+    await db.prepare(`
+      UPDATE expense_heads
+      SET name = COALESCE(?, name),
+          type = COALESCE(?, type),
+          category = COALESCE(?, category),
+          description = COALESCE(?, description),
+          status = COALESCE(?, status),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      name ? name.trim() : null,
+      type ? type.toUpperCase() : null,
+      category ?? null,
+      description !== undefined ? description : null,
+      status ?? null,
+      id
+    );
+
+    await db.prepare(`
+      INSERT INTO audit_logs (entity_type, entity_id, action, original_values, new_values, performed_by)
+      VALUES (?, ?, 'EDIT', ?, ?, 'Admin')
+    `).run('EXPENSE_HEAD', head.code, JSON.stringify(head), JSON.stringify(req.body));
+
+    res.json({ success: true, id: Number(id) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/masters/expense-heads/:id', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const head = await db.prepare('SELECT * FROM expense_heads WHERE id = ?').get(id);
+    if (!head) return res.status(404).json({ error: 'Expense/Income head not found.' });
+
+    const payCount = (await db.prepare("SELECT COUNT(*) as count FROM payments WHERE party_type IN ('EXPENSE', 'INCOME') AND party_id = ?").get(id))?.count || 0;
+    if (payCount > 0) {
+      return res.status(400).json({
+        error: `Cannot delete "${head.name}" because it has ${payCount} recorded payment/receipt transaction(s). Deactivate it instead.`
+      });
+    }
+
+    await db.prepare('DELETE FROM expense_heads WHERE id = ?').run(id);
+    await db.prepare(`
+      INSERT INTO audit_logs (entity_type, entity_id, action, original_values, performed_by)
+      VALUES (?, ?, 'DELETE', ?, 'Admin')
+    `).run('EXPENSE_HEAD', head.code, JSON.stringify(head));
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // -------------------------------------------------------------
 // 3. TRANSACTIONS API
 // -------------------------------------------------------------
@@ -1789,7 +2015,7 @@ app.get('/api/transactions/production-orders', async (req, res) => {
   }
 });
 
-app.post('/api/transactions/production-orders', async (req, res) => {
+app.post('/api/transactions/production-orders', checkManagerModule('orders', 'Production Orders'), async (req, res) => {
   try {
     const {
       orderDate, customerId, customerOrderNo, finishedProductId,
@@ -1979,7 +2205,7 @@ app.get('/api/transactions/consumption-batches/:id', async (req, res) => {
   }
 });
 
-app.post('/api/transactions/consumption-batches', async (req, res) => {
+app.post('/api/transactions/consumption-batches', checkManagerModule('consumptions', 'Material Issues (RM)'), async (req, res) => {
   try {
     const {
       date, productionOrderId, machineId, shiftId, remarks = '',
@@ -2242,7 +2468,7 @@ app.get('/api/transactions/purchases', async (req, res) => {
   }
 });
 
-app.post('/api/transactions/purchases', async (req, res) => {
+app.post('/api/transactions/purchases', checkManagerModule('purchases', 'Raw Material Purchases'), async (req, res) => {
   try {
     const {
       date,
@@ -2809,7 +3035,7 @@ app.get('/api/transactions/production', async (req, res) => {
   }
 });
 
-app.post('/api/transactions/production', async (req, res) => {
+app.post('/api/transactions/production', checkManagerModule('productions', 'Daily Production Batches'), async (req, res) => {
   try {
     let {
       date,
@@ -3162,7 +3388,7 @@ app.get('/api/transactions/sales', async (req, res) => {
   }
 });
 
-app.post('/api/transactions/sales', async (req, res) => {
+app.post('/api/transactions/sales', checkManagerModule('sales', 'Sales & Tax Invoices'), async (req, res) => {
   try {
     const {
       date,
@@ -5651,20 +5877,39 @@ app.get(['/api/accounts/cash-ledger', '/api/accounts/cash-book'], async (req, re
     }
 
     if (dateFrom) {
-      const prevRecRow = await db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE payment_mode = 'Cash' AND party_type = 'CUSTOMER' AND date < ? AND is_voided = 0").get(dateFrom);
-      const prevPayRow = await db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE payment_mode = 'Cash' AND party_type = 'SUPPLIER' AND date < ? AND is_voided = 0").get(dateFrom);
+      const prevRecRow = await db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE payment_mode = 'Cash' AND party_type IN ('CUSTOMER', 'INCOME') AND date < ? AND is_voided = 0").get(dateFrom);
+      const prevPayRow = await db.prepare("SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE payment_mode = 'Cash' AND party_type IN ('SUPPLIER', 'EXPENSE') AND date < ? AND is_voided = 0").get(dateFrom);
       const prevSaleRow = await db.prepare("SELECT COALESCE(SUM(total_amount), 0) as total FROM sales WHERE payment_type = 'Cash' AND date < ? AND is_voided = 0").get(dateFrom);
       const prevPurRow = await db.prepare("SELECT COALESCE(SUM(total_amount), 0) as total FROM raw_material_purchases WHERE payment_mode = 'Cash' AND date < ? AND is_voided = 0").get(dateFrom);
 
       openingCash = Number((openingCash + Number(prevRecRow.total) + Number(prevSaleRow.total) - Number(prevPayRow.total) - Number(prevPurRow.total)).toFixed(2));
     }
 
-    // Inflows: Cash Receipts + Non-duplicate Cash Sales
+    // Inflows: Cash Receipts + Non-duplicate Cash Sales + Cash Side Incomes
     let recQuery = "SELECT p.id, p.date, p.reference_no, p.reference_no as doc_no, p.payment_code, p.amount, c.name as party_name, p.remarks, p.created_at, p.party_id FROM payments p JOIN customers c ON p.party_id = c.id WHERE p.party_type = 'CUSTOMER' AND p.payment_mode = 'Cash' AND p.is_voided = 0";
     const recParams = [];
     if (dateFrom) { recQuery += ' AND p.date >= ?'; recParams.push(dateFrom); }
     if (dateTo) { recQuery += ' AND p.date <= ?'; recParams.push(dateTo); }
     const rawRecs = await db.prepare(recQuery).all(...recParams);
+
+    // Cash Side Incomes
+    let incQuery = "SELECT p.id, p.date, p.reference_no, p.reference_no as doc_no, p.payment_code, p.amount, eh.name as party_name, p.remarks, p.created_at, p.party_id FROM payments p JOIN expense_heads eh ON p.party_id = eh.id WHERE p.party_type = 'INCOME' AND p.payment_mode = 'Cash' AND p.is_voided = 0";
+    const incParams = [];
+    if (dateFrom) { incQuery += ' AND p.date >= ?'; incParams.push(dateFrom); }
+    if (dateTo) { incQuery += ' AND p.date <= ?'; incParams.push(dateTo); }
+    const rawIncs = await db.prepare(incQuery).all(...incParams);
+
+    const cashIncomes = rawIncs.map(p => ({
+      id: `cinc-${p.id}`,
+      date: p.date,
+      doc_no: p.doc_no || p.payment_code,
+      type: 'INFLOW',
+      category: 'Side / Other Income',
+      description: `Income: ${p.party_name}${p.remarks ? ` (${p.remarks})` : ''}`,
+      inflow: Number(Number(p.amount).toFixed(2)),
+      outflow: 0,
+      created_at: p.created_at
+    }));
 
     let salesQuery = "SELECT id, date, invoice_number, invoice_number as doc_no, sale_code, total_amount as amount, customer_id, 'CASH_SALE' as trans_type, 'Cash Sale' as description, created_at FROM sales WHERE payment_type = 'Cash' AND is_voided = 0";
     const salesParams = [];
@@ -5710,12 +5955,31 @@ app.get(['/api/accounts/cash-ledger', '/api/accounts/cash-book'], async (req, re
         created_at: r.created_at
       }));
 
-    // Outflows: Cash Supplier Payments + Non-duplicate Cash Purchases
+    // Outflows: Cash Supplier Payments + Non-duplicate Cash Purchases + Cash Expenses
     let payQuery = "SELECT p.id, p.date, p.reference_no, p.reference_no as doc_no, p.payment_code, p.amount, s.name as party_name, p.remarks, p.created_at, p.party_id FROM payments p JOIN suppliers s ON p.party_id = s.id WHERE p.party_type = 'SUPPLIER' AND p.payment_mode = 'Cash' AND p.is_voided = 0";
     const payParams = [];
     if (dateFrom) { payQuery += ' AND p.date >= ?'; payParams.push(dateFrom); }
     if (dateTo) { payQuery += ' AND p.date <= ?'; payParams.push(dateTo); }
     const rawPays = await db.prepare(payQuery).all(...payParams);
+
+    // Cash Expenses
+    let expQuery = "SELECT p.id, p.date, p.reference_no, p.reference_no as doc_no, p.payment_code, p.amount, eh.name as party_name, p.remarks, p.created_at, p.party_id FROM payments p JOIN expense_heads eh ON p.party_id = eh.id WHERE p.party_type = 'EXPENSE' AND p.payment_mode = 'Cash' AND p.is_voided = 0";
+    const expParams = [];
+    if (dateFrom) { expQuery += ' AND p.date >= ?'; expParams.push(dateFrom); }
+    if (dateTo) { expQuery += ' AND p.date <= ?'; expParams.push(dateTo); }
+    const rawExps = await db.prepare(expQuery).all(...expParams);
+
+    const cashExpenses = rawExps.map(p => ({
+      id: `cexp-${p.id}`,
+      date: p.date,
+      doc_no: p.doc_no || p.payment_code,
+      type: 'OUTFLOW',
+      category: 'Expense Payment',
+      description: `Expense: ${p.party_name}${p.remarks ? ` (${p.remarks})` : ''}`,
+      inflow: 0,
+      outflow: Number(Number(p.amount).toFixed(2)),
+      created_at: p.created_at
+    }));
 
     let purQuery = "SELECT id, date, invoice_number, invoice_number as doc_no, purchase_code, total_amount as amount, supplier_id, 'CASH_PURCHASE' as trans_type, 'Cash RM Purchase' as description, created_at FROM raw_material_purchases WHERE payment_mode = 'Cash' AND is_voided = 0";
     const purParams = [];
@@ -5761,7 +6025,7 @@ app.get(['/api/accounts/cash-ledger', '/api/accounts/cash-book'], async (req, re
         created_at: r.created_at
       }));
 
-    const allCash = [...cashSales, ...cashReceipts, ...cashPurchases, ...cashPayments].sort((a, b) => {
+    const allCash = [...cashSales, ...cashReceipts, ...cashIncomes, ...cashPurchases, ...cashPayments, ...cashExpenses].sort((a, b) => {
       const cmp = a.date.localeCompare(b.date);
       if (cmp !== 0) return cmp;
       return a.created_at.localeCompare(b.created_at);
@@ -5826,12 +6090,12 @@ app.get('/api/accounts/bank-ledger', async (req, res) => {
     }
 
     if (dateFrom) {
-      let prevRecQ = "SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE payment_mode != 'Cash' AND party_type = 'CUSTOMER' AND date < ? AND is_voided = 0";
+      let prevRecQ = "SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE payment_mode != 'Cash' AND party_type IN ('CUSTOMER', 'INCOME') AND date < ? AND is_voided = 0";
       const prevRecP = [dateFrom];
       if (bankAccountId) { prevRecQ += ' AND bank_account_id = ?'; prevRecP.push(bankAccountId); }
       const prevRecRow = await db.prepare(prevRecQ).get(...prevRecP);
 
-      let prevPayQ = "SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE payment_mode != 'Cash' AND party_type = 'SUPPLIER' AND date < ? AND is_voided = 0";
+      let prevPayQ = "SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE payment_mode != 'Cash' AND party_type IN ('SUPPLIER', 'EXPENSE') AND date < ? AND is_voided = 0";
       const prevPayP = [dateFrom];
       if (bankAccountId) { prevPayQ += ' AND bank_account_id = ?'; prevPayP.push(bankAccountId); }
       const prevPayRow = await db.prepare(prevPayQ).get(...prevPayP);
@@ -5848,7 +6112,7 @@ app.get('/api/accounts/bank-ledger', async (req, res) => {
       openingBank = Number((openingBank + Number(prevRecRow?.total || 0) - Number(prevPayRow?.total || 0) + prevTfIn - prevTfOut).toFixed(2));
     }
 
-    // Inflows: Bank Receipts
+    // Inflows: Bank Receipts + Bank Side Incomes
     let recQuery = "SELECT p.id, p.date, p.reference_no, p.reference_no as doc_no, p.payment_code, p.payment_mode, p.amount, c.name as party_name, p.remarks, p.created_at, p.party_id, p.bank_account_id FROM payments p JOIN customers c ON p.party_id = c.id WHERE p.party_type = 'CUSTOMER' AND p.payment_mode != 'Cash' AND p.is_voided = 0";
     const recParams = [];
     if (bankAccountId) { recQuery += ' AND p.bank_account_id = ?'; recParams.push(bankAccountId); }
@@ -5869,7 +6133,28 @@ app.get('/api/accounts/bank-ledger', async (req, res) => {
       created_at: r.created_at
     }));
 
-    // Outflows: Bank Supplier Payments
+    // Bank Side Incomes
+    let incQuery = "SELECT p.id, p.date, p.reference_no, p.reference_no as doc_no, p.payment_code, p.payment_mode, p.amount, eh.name as party_name, p.remarks, p.created_at, p.party_id, p.bank_account_id FROM payments p JOIN expense_heads eh ON p.party_id = eh.id WHERE p.party_type = 'INCOME' AND p.payment_mode != 'Cash' AND p.is_voided = 0";
+    const incParams = [];
+    if (bankAccountId) { incQuery += ' AND p.bank_account_id = ?'; incParams.push(bankAccountId); }
+    if (dateFrom) { incQuery += ' AND p.date >= ?'; incParams.push(dateFrom); }
+    if (dateTo) { incQuery += ' AND p.date <= ?'; incParams.push(dateTo); }
+    const rawBankIncs = await db.prepare(incQuery).all(...incParams);
+
+    const bankIncomes = rawBankIncs.map(r => ({
+      id: `binc-${r.id}`,
+      date: r.date,
+      doc_no: r.doc_no || r.payment_code,
+      type: 'INFLOW',
+      category: 'Side / Other Income',
+      description: `Income: ${r.party_name}${r.remarks ? ` (${r.remarks})` : ''}`,
+      mode: r.payment_mode || 'Bank',
+      inflow: Number(Number(r.amount).toFixed(2)),
+      outflow: 0,
+      created_at: r.created_at
+    }));
+
+    // Outflows: Bank Supplier Payments + Bank Expenses
     let payQuery = "SELECT p.id, p.date, p.reference_no, p.reference_no as doc_no, p.payment_code, p.payment_mode, p.amount, s.name as party_name, p.remarks, p.created_at, p.party_id, p.bank_account_id FROM payments p JOIN suppliers s ON p.party_id = s.id WHERE p.party_type = 'SUPPLIER' AND p.payment_mode != 'Cash' AND p.is_voided = 0";
     const payParams = [];
     if (bankAccountId) { payQuery += ' AND p.bank_account_id = ?'; payParams.push(bankAccountId); }
@@ -5884,6 +6169,27 @@ app.get('/api/accounts/bank-ledger', async (req, res) => {
       type: 'OUTFLOW',
       category: 'Supplier Payment',
       description: `Payment to ${r.party_name}${r.remarks ? ` (${r.remarks})` : ''}`,
+      mode: r.payment_mode || 'Bank',
+      inflow: 0,
+      outflow: Number(Number(r.amount).toFixed(2)),
+      created_at: r.created_at
+    }));
+
+    // Bank Expenses
+    let expQuery = "SELECT p.id, p.date, p.reference_no, p.reference_no as doc_no, p.payment_code, p.payment_mode, p.amount, eh.name as party_name, p.remarks, p.created_at, p.party_id, p.bank_account_id FROM payments p JOIN expense_heads eh ON p.party_id = eh.id WHERE p.party_type = 'EXPENSE' AND p.payment_mode != 'Cash' AND p.is_voided = 0";
+    const expParams = [];
+    if (bankAccountId) { expQuery += ' AND p.bank_account_id = ?'; expParams.push(bankAccountId); }
+    if (dateFrom) { expQuery += ' AND p.date >= ?'; expParams.push(dateFrom); }
+    if (dateTo) { expQuery += ' AND p.date <= ?'; expParams.push(dateTo); }
+    const rawBankExps = await db.prepare(expQuery).all(...expParams);
+
+    const bankExpenses = rawBankExps.map(r => ({
+      id: `bexp-${r.id}`,
+      date: r.date,
+      doc_no: r.doc_no || r.payment_code,
+      type: 'OUTFLOW',
+      category: 'Expense Payment',
+      description: `Expense: ${r.party_name}${r.remarks ? ` (${r.remarks})` : ''}`,
       mode: r.payment_mode || 'Bank',
       inflow: 0,
       outflow: Number(Number(r.amount).toFixed(2)),
@@ -5942,7 +6248,7 @@ app.get('/api/accounts/bank-ledger', async (req, res) => {
       created_at: t.created_at
     }));
 
-    const allBank = [...bankReceipts, ...bankPayments, ...transfersIn, ...transfersOut].sort((a, b) => {
+    const allBank = [...bankReceipts, ...bankIncomes, ...bankPayments, ...bankExpenses, ...transfersIn, ...transfersOut].sort((a, b) => {
       const cmp = a.date.localeCompare(b.date);
       if (cmp !== 0) return cmp;
       return a.created_at.localeCompare(b.created_at);
@@ -5989,11 +6295,13 @@ app.get('/api/accounts/payments', async (req, res) => {
              CASE
                WHEN p.party_type = 'CUSTOMER' THEN (SELECT name FROM customers WHERE id = p.party_id)
                WHEN p.party_type = 'SUPPLIER' THEN (SELECT name FROM suppliers WHERE id = p.party_id)
+               WHEN p.party_type IN ('EXPENSE', 'INCOME') THEN (SELECT name FROM expense_heads WHERE id = p.party_id)
                ELSE 'Unknown'
              END AS party_name,
              CASE
                WHEN p.party_type = 'CUSTOMER' THEN (SELECT gst_number FROM customers WHERE id = p.party_id)
                WHEN p.party_type = 'SUPPLIER' THEN (SELECT gst_number FROM suppliers WHERE id = p.party_id)
+               WHEN p.party_type IN ('EXPENSE', 'INCOME') THEN (SELECT category FROM expense_heads WHERE id = p.party_id)
                ELSE ''
              END AS party_gstin
       FROM payments p
@@ -6017,11 +6325,11 @@ app.get('/api/accounts/payments', async (req, res) => {
 });
 
 // Payment / Receipt Entry (Supports Manager role & Admin role)
-app.post('/api/accounts/payments', async (req, res) => {
+app.post('/api/accounts/payments', checkManagerModule('payments', 'Receipts & Payments'), async (req, res) => {
   try {
     const {
       date,
-      partyType, // 'CUSTOMER' or 'SUPPLIER'
+      partyType, // 'CUSTOMER', 'SUPPLIER', 'EXPENSE', or 'INCOME'
       partyId,
       amount,
       paymentMode = 'Bank', // 'Cash', 'Bank', 'Cheque', 'UPI', 'NEFT/RTGS'
@@ -6037,23 +6345,26 @@ app.post('/api/accounts/payments', async (req, res) => {
     if (!date || !partyType || !partyId || isNaN(numAmount) || numAmount <= 0) {
       return res.status(400).json({ error: 'Valid Date, Party Type, Party, and Amount (>0) are required.' });
     }
-    if (!['CUSTOMER', 'SUPPLIER'].includes(partyType)) {
-      return res.status(400).json({ error: 'Party Type must be CUSTOMER or SUPPLIER.' });
+    if (!['CUSTOMER', 'SUPPLIER', 'EXPENSE', 'INCOME'].includes(partyType)) {
+      return res.status(400).json({ error: 'Party Type must be CUSTOMER, SUPPLIER, EXPENSE, or INCOME.' });
     }
 
     if (partyType === 'CUSTOMER') {
       const c = await db.prepare('SELECT id FROM customers WHERE id = ?').get(partyId);
       if (!c) return res.status(400).json({ error: `Customer ID ${partyId} not found.` });
-    } else {
+    } else if (partyType === 'SUPPLIER') {
       const s = await db.prepare('SELECT id FROM suppliers WHERE id = ?').get(partyId);
       if (!s) return res.status(400).json({ error: `Supplier ID ${partyId} not found.` });
+    } else {
+      const eh = await db.prepare('SELECT id, name, type FROM expense_heads WHERE id = ?').get(partyId);
+      if (!eh) return res.status(400).json({ error: `Expense/Income Head ID ${partyId} not found.` });
     }
 
     const finalManagerName = (req.role === 'manager' && req.manager) ? req.manager.name : (managerName || 'Admin');
     const finalManagerId = (req.role === 'manager' && req.manager) ? req.manager.id : (managerId || null);
     const finalDeviceId = (req.role === 'manager' && req.manager) ? (req.manager.device_id || deviceId || '') : (deviceId || '');
 
-    const prefix = partyType === 'CUSTOMER' ? 'REC' : 'PAY';
+    const prefix = partyType === 'CUSTOMER' ? 'REC' : (partyType === 'EXPENSE' ? 'EXP' : (partyType === 'INCOME' ? 'INC' : 'PAY'));
     const code = await getNextCode(prefix, 'payments', 'payment_code');
 
     const info = await db.prepare(`
@@ -6092,7 +6403,7 @@ app.put('/api/accounts/payments/:id', requireAdmin, async (req, res) => {
     if (!pay) return res.status(404).json({ error: 'Payment record not found' });
     if (pay.is_voided) return res.status(400).json({ error: 'Cannot edit a voided payment.' });
 
-    const { date, amount, paymentMode, bankAccountId, referenceNo, remarks, partyId, againstType } = req.body;
+    const { date, amount, paymentMode, bankAccountId, referenceNo, remarks, partyId, partyType, againstType } = req.body;
     const numAmount = Number(amount);
     if (isNaN(numAmount) || numAmount <= 0) {
       return res.status(400).json({ error: 'Amount must be a positive number.' });
@@ -6107,6 +6418,7 @@ app.put('/api/accounts/payments/:id', requireAdmin, async (req, res) => {
           reference_no = COALESCE(?, reference_no),
           remarks = COALESCE(?, remarks),
           party_id = COALESCE(?, party_id),
+          party_type = COALESCE(?, party_type),
           against_type = COALESCE(?, against_type)
       WHERE id = ?
     `).run(
@@ -6117,6 +6429,7 @@ app.put('/api/accounts/payments/:id', requireAdmin, async (req, res) => {
       referenceNo !== undefined ? referenceNo : null,
       remarks !== undefined ? remarks : null,
       partyId ? Number(partyId) : null,
+      partyType || null,
       againstType || null,
       pay.id
     );
@@ -6149,6 +6462,103 @@ app.delete('/api/accounts/payments/:id', requireAdmin, async (req, res) => {
     res.json({ success: true, message: 'Payment entry voided successfully.' });
   } catch (err) {
     res.status(400).json({ error: err.message });
+  }
+});
+
+// =============================================================
+// EXPENSE & INCOME LEDGER STATEMENT
+// =============================================================
+app.get('/api/accounts/expense-ledger', async (req, res) => {
+  try {
+    const { expenseHeadId, type, dateFrom, dateTo } = req.query;
+
+    let headInfo = null;
+    if (expenseHeadId) {
+      headInfo = await db.prepare('SELECT * FROM expense_heads WHERE id = ?').get(expenseHeadId);
+    }
+
+    let query = `
+      SELECT p.*,
+             eh.name as head_name,
+             eh.code as head_code,
+             eh.type as head_type,
+             eh.category as head_category,
+             ba.bank_name,
+             ba.account_name as bank_account_name
+      FROM payments p
+      JOIN expense_heads eh ON p.party_id = eh.id
+      LEFT JOIN bank_accounts ba ON p.bank_account_id = ba.id
+      WHERE p.party_type IN ('EXPENSE', 'INCOME') AND p.is_voided = 0
+    `;
+    const params = [];
+    if (expenseHeadId) {
+      query += ' AND p.party_id = ?';
+      params.push(expenseHeadId);
+    }
+    if (type) {
+      query += ' AND p.party_type = ?';
+      params.push(type.toUpperCase());
+    }
+    if (dateFrom) {
+      query += ' AND p.date >= ?';
+      params.push(dateFrom);
+    }
+    if (dateTo) {
+      query += ' AND p.date <= ?';
+      params.push(dateTo);
+    }
+
+    query += ' ORDER BY p.date ASC, p.id ASC';
+    const rawRows = await db.prepare(query).all(...params);
+
+    let totalAmount = 0;
+    let cashTotal = 0;
+    let bankTotal = 0;
+
+    let runningTotal = 0;
+    const transactions = rawRows.map(r => {
+      const amt = Number(r.amount || 0);
+      totalAmount += amt;
+      runningTotal += amt;
+      if (r.payment_mode === 'Cash') {
+        cashTotal += amt;
+      } else {
+        bankTotal += amt;
+      }
+
+      return {
+        id: `exp-${r.id}`,
+        paymentId: r.id,
+        date: r.date,
+        voucher_no: r.payment_code,
+        doc_no: r.payment_code,
+        head_name: r.head_name,
+        head_code: r.head_code,
+        head_type: r.head_type,
+        category: r.head_category,
+        payment_mode: r.payment_mode,
+        bank_name: r.bank_name || (r.payment_mode === 'Cash' ? 'Cash in Hand' : '—'),
+        reference_no: r.reference_no || '',
+        remarks: r.remarks || '',
+        amount: amt,
+        running_total: Number(runningTotal.toFixed(2)),
+        created_by: r.manager_name || r.created_by || 'Admin',
+        created_at: r.created_at
+      };
+    });
+
+    res.json({
+      expenseHead: headInfo,
+      transactions,
+      summary: {
+        count: transactions.length,
+        totalAmount: Number(totalAmount.toFixed(2)),
+        cashTotal: Number(cashTotal.toFixed(2)),
+        bankTotal: Number(bankTotal.toFixed(2))
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

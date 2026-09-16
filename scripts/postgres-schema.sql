@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS users (
     session_token   VARCHAR(200),
     manager_id      INTEGER,
     status          VARCHAR(20)  DEFAULT 'active' NOT NULL CHECK (status IN ('active', 'inactive')),
+    permissions     TEXT,
     created_at      TIMESTAMP    DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
@@ -34,6 +35,7 @@ CREATE TABLE IF NOT EXISTS managers (
     phone           VARCHAR(30),
     status          VARCHAR(20)  DEFAULT 'active' NOT NULL CHECK (status IN ('active', 'inactive')),
     manager_token   VARCHAR(200) UNIQUE,
+    permissions     TEXT,
     created_at      TIMESTAMP    DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at      TIMESTAMP    DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
@@ -558,6 +560,24 @@ CREATE TABLE IF NOT EXISTS settings (
     value       TEXT,
     updated_at  TIMESTAMP    DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
+
+-- =============================================================================
+-- TABLE 25: expense_heads
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS expense_heads (
+    id              SERIAL PRIMARY KEY,
+    code            VARCHAR(50) NOT NULL UNIQUE,
+    name            VARCHAR(200) NOT NULL,
+    type            VARCHAR(20) DEFAULT 'EXPENSE' NOT NULL CHECK (type IN ('EXPENSE', 'INCOME')),
+    category        VARCHAR(100) DEFAULT 'Direct Expense',
+    status          VARCHAR(20) DEFAULT 'active' NOT NULL CHECK (status IN ('active', 'inactive')),
+    description     TEXT,
+    created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_expense_heads_type ON expense_heads(type);
+CREATE INDEX IF NOT EXISTS idx_expense_heads_status ON expense_heads(status);
 
 -- =============================================================================
 -- DEFAULT COMPANY SETTINGS & MASTER ADMIN

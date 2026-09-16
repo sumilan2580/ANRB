@@ -249,6 +249,32 @@ async function initPool() {
           updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE TABLE IF NOT EXISTS expense_heads (
+          id SERIAL PRIMARY KEY,
+          code VARCHAR(50) UNIQUE NOT NULL,
+          name VARCHAR(200) NOT NULL,
+          type VARCHAR(20) DEFAULT 'EXPENSE' NOT NULL,
+          category VARCHAR(100) DEFAULT 'Direct Expense',
+          status VARCHAR(20) DEFAULT 'active',
+          description TEXT,
+          created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );
+
+        INSERT INTO expense_heads (code, name, type, category, status, description)
+        VALUES 
+          ('EXP-000001', 'Electricity & Power Bill', 'EXPENSE', 'Direct Expense', 'active', 'Factory electricity and power supply expenses'),
+          ('EXP-000002', 'Diesel & Fuel (Generator/Machinery)', 'EXPENSE', 'Direct Expense', 'active', 'Diesel and generator running expenses'),
+          ('EXP-000003', 'Machine Maintenance & Spare Parts', 'EXPENSE', 'Direct Expense', 'active', 'Machine repair, servicing, and spare parts'),
+          ('EXP-000004', 'Factory & Godown Rent', 'EXPENSE', 'Indirect Expense', 'active', 'Monthly factory/godown premises rent'),
+          ('EXP-000005', 'Staff Welfare, Tea & Refreshments', 'EXPENSE', 'Indirect Expense', 'active', 'Staff tea, snacks, and daily refreshment expenses'),
+          ('EXP-000006', 'Freight, Cartage & Transport', 'EXPENSE', 'Direct Expense', 'active', 'Incoming/outgoing goods transport charges'),
+          ('EXP-000007', 'Office Stationery & Printing', 'EXPENSE', 'Indirect Expense', 'active', 'Office supplies, bill books, and print items'),
+          ('EXP-000008', 'Other Miscellaneous Expense', 'EXPENSE', 'Indirect Expense', 'active', 'General misc daily operational expense'),
+          ('INC-000001', 'Scrap & Waste Materials Sale', 'INCOME', 'Side Income', 'active', 'Revenue from sale of factory scrap, polymer waste, trims'),
+          ('INC-000002', 'Other Miscellaneous / Side Income', 'INCOME', 'Side Income', 'active', 'Other side income, odd commission, interest')
+        ON CONFLICT (code) DO NOTHING;
+
         ALTER TABLE payments ADD COLUMN IF NOT EXISTS bank_account_id INTEGER REFERENCES bank_accounts(id);
       `);
     } finally {

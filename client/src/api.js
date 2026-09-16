@@ -73,6 +73,7 @@ export const api = {
   updateManagerUserStatus: (id, status) => request(`/auth/manager-users/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) }),
   resetManagerUserPassword: (id, newPassword) => request(`/auth/manager-users/${id}/password`, { method: 'PUT', body: JSON.stringify({ newPassword }) }),
   deleteManagerUser: (id) => request(`/auth/manager-users/${id}`, { method: 'DELETE' }),
+  updateManagerUserPermissions: (id, permissions) => request(`/auth/manager-users/${id}/permissions`, { method: 'PUT', body: JSON.stringify({ permissions }) }),
 
   // Dashboard & Stats
   getDashboardStats: () => request('/dashboard/stats'),
@@ -109,10 +110,16 @@ export const api = {
   updateShift: (id, data) => request(`/masters/shifts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteShift: (id) => request(`/masters/shifts/${id}`, { method: 'DELETE' }),
 
+  getExpenseHeads: (params = '') => request(`/masters/expense-heads${params ? `?${params}` : ''}`),
+  createExpenseHead: (data) => request('/masters/expense-heads', { method: 'POST', body: JSON.stringify(data) }),
+  updateExpenseHead: (id, data) => request(`/masters/expense-heads/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteExpenseHead: (id) => request(`/masters/expense-heads/${id}`, { method: 'DELETE' }),
+
   getManagers: () => request('/masters/managers'),
   createManager: (data) => request('/masters/managers', { method: 'POST', body: JSON.stringify(data) }),
   updateManager: (id, data) => request(`/masters/managers/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   updateManagerStatus: (id, status) => request(`/masters/managers/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) }),
+  updateManagerPermissions: (id, permissions) => request(`/masters/managers/${id}/permissions`, { method: 'PUT', body: JSON.stringify({ permissions }) }),
   deleteManager: (id) => request(`/masters/managers/${id}`, { method: 'DELETE' }),
   registerManager: (data) => request('/managers/register', { method: 'POST', body: JSON.stringify(data) }),
   getManagerActivity: (managerName = '') => request(`/managers/activity${managerName ? `?managerName=${encodeURIComponent(managerName)}` : ''}`),
@@ -225,6 +232,14 @@ export const api = {
   createPayment: (data) => request('/accounts/payments', { method: 'POST', body: JSON.stringify(data) }),
   updatePayment: (id, data) => request(`/accounts/payments/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deletePayment: (id) => request(`/accounts/payments/${id}`, { method: 'DELETE' }),
+  getExpenseLedger: (expenseHeadId, dateFrom, dateTo, type) => {
+    const p = new URLSearchParams();
+    if (expenseHeadId) p.append('expenseHeadId', expenseHeadId);
+    if (type) p.append('type', type);
+    if (dateFrom) p.append('dateFrom', dateFrom);
+    if (dateTo) p.append('dateTo', dateTo);
+    return request(`/accounts/expense-ledger?${p}`);
+  },
   getInvoice: (saleId) => request(`/invoices/${saleId}`),
   getEInvoiceJson: (saleId) => request(`/invoices/${saleId}/e-invoice-json`),
   getEWayBillJson: (saleId) => request(`/invoices/${saleId}/e-waybill-json`),

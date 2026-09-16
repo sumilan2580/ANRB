@@ -17,6 +17,7 @@ function initSchema() {
       password TEXT,
       role TEXT DEFAULT 'admin',
       name TEXT,
+      permissions TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -27,6 +28,7 @@ function initSchema() {
       phone TEXT,
       status TEXT DEFAULT 'active',
       manager_token TEXT UNIQUE,
+      permissions TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -331,6 +333,18 @@ function initSchema() {
       remarks TEXT,
       created_by TEXT DEFAULT 'Admin',
       is_voided INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS expense_heads (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      code TEXT UNIQUE NOT NULL,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT 'EXPENSE', -- 'EXPENSE' or 'INCOME'
+      category TEXT DEFAULT 'Direct Expense',
+      status TEXT DEFAULT 'active',
+      description TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -847,6 +861,21 @@ try {
   try {
     db.exec('ALTER TABLE users ADD COLUMN status TEXT DEFAULT \'active\';');
   } catch { /* already exists */ }
+  try {
+    db.exec('ALTER TABLE users ADD COLUMN permissions TEXT;');
+  } catch { /* already exists */ }
+  try {
+    db.exec('ALTER TABLE managers ADD COLUMN permissions TEXT;');
+  } catch { /* already exists */ }
+
+  const DEFAULT_MANAGER_PERMISSIONS = JSON.stringify([
+    'orders', 'purchases', 'consumptions', 'productions', 'sales',
+    'payments', 'attendance', 'ledger', 'outstanding', 'masters'
+  ]);
+  try {
+    db.prepare("UPDATE managers SET permissions = ? WHERE permissions IS NULL OR permissions = ''").run(DEFAULT_MANAGER_PERMISSIONS);
+    db.prepare("UPDATE users SET permissions = ? WHERE role = 'manager' AND (permissions IS NULL OR permissions = '')").run(DEFAULT_MANAGER_PERMISSIONS);
+  } catch { /* ignore */ }
 
   // Idempotent column migrations for GST, HSN, State, Invoice fields, Multi-items and Ledgers
   const safeMigrations = [
@@ -966,6 +995,42 @@ try {
     `);
   } catch (e) {
     console.warn('Staff tables already exist or error:', e.message);
+  }
+
+  // Expense Heads table & seed (safe create)
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS expense_heads (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL DEFAULT 'EXPENSE',
+        category TEXT DEFAULT 'Direct Expense',
+        status TEXT DEFAULT 'active',
+        description TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    const ehCount = db.prepare('SELECT COUNT(*) as count FROM expense_heads').get()?.count || 0;
+    if (ehCount === 0) {
+      const insEH = db.prepare(`
+        INSERT INTO expense_heads (code, name, type, category, status, description)
+        VALUES (?, ?, ?, ?, 'active', ?)
+      `);
+      insEH.run('EXP-000001', 'Electricity & Power Bill', 'EXPENSE', 'Direct Expense', 'Factory electricity and power supply expenses');
+      insEH.run('EXP-000002', 'Diesel & Fuel (Generator/Machinery)', 'EXPENSE', 'Direct Expense', 'Diesel and generator running expenses');
+      insEH.run('EXP-000003', 'Machine Maintenance & Spare Parts', 'EXPENSE', 'Direct Expense', 'Machine repair, servicing, and spare parts');
+      insEH.run('EXP-000004', 'Factory & Godown Rent', 'EXPENSE', 'Indirect Expense', 'Monthly factory/godown premises rent');
+      insEH.run('EXP-000005', 'Staff Welfare, Tea & Refreshments', 'EXPENSE', 'Indirect Expense', 'Staff tea, snacks, and daily refreshment expenses');
+      insEH.run('EXP-000006', 'Freight, Cartage & Transport', 'EXPENSE', 'Direct Expense', 'Incoming/outgoing goods transport charges');
+      insEH.run('EXP-000007', 'Office Stationery & Printing', 'EXPENSE', 'Indirect Expense', 'Office supplies, bill books, and print items');
+      insEH.run('EXP-000008', 'Other Miscellaneous Expense', 'EXPENSE', 'Indirect Expense', 'General misc daily operational expense');
+      insEH.run('INC-000001', 'Scrap & Waste Materials Sale', 'INCOME', 'Side Income', 'Revenue from sale of factory scrap, polymer waste, trims');
+      insEH.run('INC-000002', 'Other Miscellaneous / Side Income', 'INCOME', 'Side Income', 'Other side income, odd commission, interest');
+    }
+  } catch (e) {
+    console.warn('Expense heads table create or seed error:', e.message);
   }
 
   // Seed default company profile settings

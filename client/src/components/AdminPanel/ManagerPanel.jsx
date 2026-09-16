@@ -99,6 +99,7 @@ function SearchableSelect({ value, onChange, options, placeholder = 'Search or t
 }
 import PurchaseEntryModal from '../ManagerApp/PurchaseEntryModal';
 import ProductionEntryModal from '../ManagerApp/ProductionEntryModal';
+import ProductionOrderModal from '../ManagerApp/ProductionOrderModal';
 import SalesEntryModal from '../ManagerApp/SalesEntryModal';
 import PaymentEntryModal from '../ManagerApp/PaymentEntryModal';
 import ConsumptionEntryModal from '../ManagerApp/ConsumptionEntryModal';
@@ -230,6 +231,8 @@ function MasterAddModal({ isOpen, type, onClose, onCreated }) {
         setFormData({ capacityKgPerDay: '5000' });
       } else if (type === 'shifts') {
         setFormData({ startTime: '08:00 AM', endTime: '04:00 PM' });
+      } else if (type === 'expense-heads') {
+        setFormData({ type: 'EXPENSE', category: 'Direct Expense' });
       } else {
         setFormData({});
       }
@@ -342,6 +345,25 @@ function MasterAddModal({ isOpen, type, onClose, onCreated }) {
         { key: 'endTime', label: 'End Time', placeholder: '04:00 PM' },
       ],
       apiCall: (d) => api.createShift(d)
+    },
+    'expense-heads': {
+      title: 'Add New Expense / Income Head',
+      fields: [
+        { key: 'name', label: 'Head Name *', placeholder: 'e.g. Factory Diesel, Tea & Snacks, Scrap Sale', required: true },
+        { key: 'type', label: 'Type *', type: 'select', required: true, options: [
+          { value: 'EXPENSE', label: 'EXPENSE (Factory / Office Outflow)' },
+          { value: 'INCOME', label: 'INCOME (Side / Scrap Inflow)' },
+        ]},
+        { key: 'category', label: 'Category *', type: 'select', required: true, options: [
+          { value: 'Direct Expense', label: 'Direct Expense (Production / Factory / Fuel)' },
+          { value: 'Indirect Expense', label: 'Indirect Expense (Office / Admin / Welfare)' },
+          { value: 'Factory Maintenance', label: 'Factory Maintenance' },
+          { value: 'Side Income', label: 'Side Income (Scrap / Misc)' },
+          { value: 'Other', label: 'Other' },
+        ]},
+        { key: 'description', label: 'Description / Notes', placeholder: 'Optional remarks or purpose' },
+      ],
+      apiCall: (d) => api.createExpenseHead(d)
     }
   };
 
@@ -516,7 +538,8 @@ function ManagerMasters() {
     'customers': [],
     'suppliers': [],
     'machines': [],
-    'shifts': []
+    'shifts': [],
+    'expense-heads': []
   });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -526,13 +549,14 @@ function ManagerMasters() {
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [rm, fg, cust, supp, mach, sh] = await Promise.all([
+      const [rm, fg, cust, supp, mach, sh, exp] = await Promise.all([
         api.getRawMaterials().catch(() => []),
         api.getFinishedGoods().catch(() => []),
         api.getCustomers().catch(() => []),
         api.getSuppliers().catch(() => []),
         api.getMachines().catch(() => []),
-        api.getShifts().catch(() => [])
+        api.getShifts().catch(() => []),
+        api.getExpenseHeads().catch(() => [])
       ]);
       setData({
         'raw-materials': rm || [],
@@ -540,7 +564,8 @@ function ManagerMasters() {
         'customers': cust || [],
         'suppliers': supp || [],
         'machines': mach || [],
-        'shifts': sh || []
+        'shifts': sh || [],
+        'expense-heads': exp || []
       });
     } catch (err) {
       console.error(err);
@@ -558,6 +583,7 @@ function ManagerMasters() {
     { id: 'suppliers', label: 'Suppliers', icon: UserCheck, count: data['suppliers'].length },
     { id: 'raw-materials', label: 'Raw Materials', icon: Layers, count: data['raw-materials'].length },
     { id: 'finished-goods', label: 'Finished Goods', icon: Package, count: data['finished-goods'].length },
+    { id: 'expense-heads', label: 'Expense & Income Heads', icon: DollarSign, count: (data['expense-heads'] || []).length },
     { id: 'machines', label: 'Machines', icon: Cpu, count: data['machines'].length },
     { id: 'shifts', label: 'Shifts', icon: Clock, count: data['shifts'].length },
   ];
@@ -728,6 +754,13 @@ function ManagerMasters() {
                   {tab === 'shifts' && (
                     <div>Hours: <strong>{item.start_time || '—'}</strong> to <strong>{item.end_time || '—'}</strong></div>
                   )}
+                  {tab === 'expense-heads' && (
+                    <>
+                      <div>Code: <strong style={{ color: '#cbd5e1' }}>{item.code}</strong> · Type: <span style={{ color: item.type === 'INCOME' ? '#34d399' : '#fb7185', fontWeight: '700' }}>{item.type}</span></div>
+                      <div>Category: <strong style={{ color: '#cbd5e1' }}>{item.category}</strong></div>
+                      {item.description && <div style={{ color: '#cbd5e1', fontSize: '11.5px', marginTop: '2px' }}>{item.description}</div>}
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -757,7 +790,7 @@ function ManagerMasters() {
 
 // ─── Party Ledger View with WhatsApp & Bill Print ──────────────────────────────
 function LedgerView({ onViewInvoice }) {
-  const [type, setType] = useState('CUSTOMER'); // 'CUSTOMER' | 'SUPPLIER'
+  const [type, setType] = useState('CUSTOMER'); // 'CUSTOMER' | 'SUPPLIER' | 'EXPENSE'
   const [partyId, setPartyId] = useState('');
   const [parties, setParties] = useState([]);
   const [dateFrom, setDateFrom] = useState('');
@@ -773,7 +806,12 @@ function LedgerView({ onViewInvoice }) {
     setLedger(null);
     setPartyId('');
     setError('');
-    const fetcher = type === 'CUSTOMER' ? api.getCustomers() : api.getSuppliers();
+    const fetcher = type === 'CUSTOMER'
+      ? api.getCustomers()
+      : type === 'SUPPLIER'
+        ? api.getSuppliers()
+        : api.getExpenseHeads();
+
     fetcher
       .then(res => {
         const list = res || [];
@@ -786,7 +824,7 @@ function LedgerView({ onViewInvoice }) {
 
   const loadStatement = async (pid = partyId) => {
     if (!pid) {
-      setError(`Please select a ${type === 'CUSTOMER' ? 'Customer' : 'Supplier'} first.`);
+      setError(`Please select a ${type === 'CUSTOMER' ? 'Customer' : type === 'SUPPLIER' ? 'Supplier' : 'Expense / Income Head'} first.`);
       return;
     }
     setLoading(true);
@@ -794,7 +832,9 @@ function LedgerView({ onViewInvoice }) {
     try {
       const data = type === 'CUSTOMER'
         ? await api.getCustomerLedger(pid, dateFrom, dateTo)
-        : await api.getSupplierLedger(pid, dateFrom, dateTo);
+        : type === 'SUPPLIER'
+          ? await api.getSupplierLedger(pid, dateFrom, dateTo)
+          : await api.getExpenseLedger(pid, dateFrom, dateTo);
       setLedger(data);
     } catch (err) {
       setError(err.message || 'Failed to load ledger statement.');
@@ -803,9 +843,98 @@ function LedgerView({ onViewInvoice }) {
     }
   };
 
+  const isExpenseType = type === 'EXPENSE';
+  const isIncomeHead = isExpenseType && ledger?.head?.type === 'INCOME';
+
   const handlePrintLedger = () => {
     if (!ledger) return;
     const win = window.open('', '_blank');
+
+    if (isExpenseType) {
+      const h = ledger.head || {};
+      const isInc = h.type === 'INCOME';
+      const rows = (ledger.transactions || []).map(t => `
+        <tr>
+          <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:11px;">${t.date || ''}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:11px;font-family:monospace;">${t.doc_no || '—'}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:11px;">${t.payment_mode || 'Bank'}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:11px;">${t.bank_name || (t.payment_mode === 'Cash' ? 'Cash in Hand' : '—')}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:11px;">${t.reference_no || '—'}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:11px;">${t.description || '—'}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:11px;text-align:right;font-weight:bold;color:${isInc ? '#16a34a' : '#dc2626'};">
+            ₹${Number(t.amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+          </td>
+        </tr>
+      `).join('');
+
+      win.document.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>${isInc ? 'Income Ledger' : 'Expense Ledger'} - ${h.name || 'Head'}</title>
+          <style>
+            * { box-sizing: border-box; }
+            body { font-family: system-ui, -apple-system, sans-serif; margin: 24px; color: #0f172a; font-size: 12px; }
+            h2 { margin: 0 0 4px; color: #1e293b; }
+            .party-info { color: #64748b; margin-bottom: 16px; font-size: 11px; }
+            .summary-grid { display: flex; gap: 12px; margin-bottom: 16px; }
+            .summary-card { flex: 1; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px; }
+            .summary-label { font-size: 10px; color: #64748b; text-transform: uppercase; font-weight: 600; }
+            .summary-val { font-size: 15px; font-weight: 700; margin-top: 4px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+            th { background: #0f172a; color: #fff; padding: 8px; text-align: left; font-size: 11px; }
+            @media print { * { -webkit-print-color-adjust: exact; } }
+          </style>
+        </head>
+        <body>
+          <h2>ANRB MANUFACTURING · ${isInc ? 'SIDE INCOME STATEMENT' : 'EXPENSE STATEMENT'}</h2>
+          <div class="party-info">
+            <strong>${h.name || ''} (${h.code || ''})</strong> · Category: ${h.category || 'General'} · Type: ${h.type || 'EXPENSE'}
+            <br/>Period: ${dateFrom || 'Inception'} to ${dateTo || 'Current Date'}
+          </div>
+          <div class="summary-grid">
+            <div class="summary-card">
+              <div class="summary-label">Total ${isInc ? 'Received' : 'Incurred'}</div>
+              <div class="summary-val" style="color:${isInc ? '#16a34a' : '#dc2626'};">₹${Number(ledger.summary?.totalIncurred || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+            </div>
+            <div class="summary-card">
+              <div class="summary-label">Cash ${isInc ? 'Inflow' : 'Outflow'}</div>
+              <div class="summary-val" style="color:#f59e0b;">₹${Number(ledger.summary?.totalCash || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+            </div>
+            <div class="summary-card">
+              <div class="summary-label">Bank ${isInc ? 'Inflow' : 'Outflow'}</div>
+              <div class="summary-val" style="color:#0284c7;">₹${Number(ledger.summary?.totalBank || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+            </div>
+            <div class="summary-card">
+              <div class="summary-label">Total Entries</div>
+              <div class="summary-val">${ledger.summary?.totalCount || 0}</div>
+            </div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Voucher #</th>
+                <th>Mode</th>
+                <th>Bank / Account</th>
+                <th>Ref / Cheque #</th>
+                <th>Remarks</th>
+                <th style="text-align:right;">Amount (₹)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows || '<tr><td colspan="7" style="text-align:center;padding:20px;">No entries recorded</td></tr>'}
+            </tbody>
+          </table>
+        </body>
+        </html>
+      `);
+      win.document.close();
+      win.focus();
+      setTimeout(() => { win.print(); win.close(); }, 400);
+      return;
+    }
+
     const party = ledger.customer || ledger.supplier || {};
     const rows = (ledger.transactions || []).map(t => `
       <tr>
@@ -890,6 +1019,26 @@ function LedgerView({ onViewInvoice }) {
 
   const handleSendWhatsApp = () => {
     if (!ledger) return;
+
+    if (isExpenseType) {
+      const h = ledger.head || {};
+      const isInc = h.type === 'INCOME';
+      let msg = `*${isInc ? 'SIDE INCOME STATEMENT' : 'EXPENSE STATEMENT'}*\n`;
+      msg += `*Company:* ANRB Manufacturing\n`;
+      msg += `*Head:* ${h.name || ''} (${h.code || ''})\n`;
+      msg += `*Category:* ${h.category || 'General'}\n`;
+      if (dateFrom || dateTo) msg += `*Period:* ${dateFrom || 'Inception'} to ${dateTo || 'Current'}\n`;
+      msg += `--------------------------------\n`;
+      msg += `*Total ${isInc ? 'Received' : 'Incurred'}:* ₹${Number(ledger.summary?.totalIncurred || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}\n`;
+      msg += `*Cash In Hand:* ₹${Number(ledger.summary?.totalCash || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}\n`;
+      msg += `*Bank Transfers:* ₹${Number(ledger.summary?.totalBank || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}\n`;
+      msg += `*Total Vouchers:* ${ledger.summary?.totalCount || 0}\n`;
+      msg += `--------------------------------\n`;
+      const encoded = encodeURIComponent(msg);
+      window.open(`https://wa.me/?text=${encoded}`, '_blank');
+      return;
+    }
+
     const party = ledger.customer || ledger.supplier || {};
     const phone = (party.phone || '').replace(/[^0-9]/g, '');
     const bal = Math.abs(ledger.closingBalance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 });
@@ -924,10 +1073,10 @@ function LedgerView({ onViewInvoice }) {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '18px', flexWrap: 'wrap', gap: '12px' }}>
         <div>
           <h2 style={{ margin: 0, fontSize: '20px', fontWeight: '700', color: '#f1f5f9' }}>
-            Party Account Ledger & Statement
+            Account Statements & Ledgers
           </h2>
           <p style={{ margin: '3px 0 0', fontSize: '12px', color: '#64748b' }}>
-            View customer or supplier ledger, print statement, or send detailed statement via WhatsApp.
+            View customer, supplier, and factory expense & side income statements, print vouchers, or send via WhatsApp.
           </p>
         </div>
       </div>
@@ -938,7 +1087,7 @@ function LedgerView({ onViewInvoice }) {
         borderRadius: '12px', padding: '16px', marginBottom: '18px'
       }}>
         {/* Toggle Type */}
-        <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '14px', flexWrap: 'wrap' }}>
           <button
             onClick={() => setType('CUSTOMER')}
             style={{
@@ -961,13 +1110,24 @@ function LedgerView({ onViewInvoice }) {
           >
             Supplier Ledgers
           </button>
+          <button
+            onClick={() => setType('EXPENSE')}
+            style={{
+              padding: '7px 16px', borderRadius: '8px', border: 'none',
+              background: type === 'EXPENSE' ? 'rgba(244,63,94,0.2)' : 'rgba(255,255,255,0.04)',
+              color: type === 'EXPENSE' ? '#fb7185' : '#94a3b8',
+              fontWeight: type === 'EXPENSE' ? '700' : '500', cursor: 'pointer', fontSize: '13px'
+            }}
+          >
+            Expense & Side Income Ledgers
+          </button>
         </div>
 
         {/* Inputs row */}
         <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <div style={{ flex: '1 1 240px' }}>
             <label style={{ display: 'block', fontSize: '11px', fontWeight: '600', color: '#94a3b8', marginBottom: '4px' }}>
-              Select {type === 'CUSTOMER' ? 'Customer' : 'Supplier'} *
+              Select {type === 'CUSTOMER' ? 'Customer' : type === 'SUPPLIER' ? 'Supplier' : 'Expense / Income Head'} *
             </label>
             <select
               value={partyId}
@@ -978,10 +1138,14 @@ function LedgerView({ onViewInvoice }) {
                 color: '#f8fafc', fontSize: '13px', outline: 'none'
               }}
             >
-              <option value="" style={{ background: '#0f172a' }}>-- Select {type === 'CUSTOMER' ? 'Customer' : 'Supplier'} --</option>
+              <option value="" style={{ background: '#0f172a' }}>
+                -- Select {type === 'CUSTOMER' ? 'Customer' : type === 'SUPPLIER' ? 'Supplier' : 'Expense / Income Head'} --
+              </option>
               {parties.map(p => (
                 <option key={p.id} value={p.id} style={{ background: '#0f172a' }}>
-                  {p.name} {p.phone ? `(${p.phone})` : ''}
+                  {isExpenseType
+                    ? `[${p.code || p.id}] ${p.name} — ${p.category} (${p.type})`
+                    : `${p.name} ${p.phone ? `(${p.phone})` : ''}`}
                 </option>
               ))}
             </select>
@@ -1053,7 +1217,7 @@ function LedgerView({ onViewInvoice }) {
                   color: '#25D366', fontSize: '12.5px', fontWeight: '700', cursor: 'pointer'
                 }}
               >
-                <MessageCircle size={14} /> Send WhatsApp
+                <MessageCircle size={14} /> Share WhatsApp
               </button>
             </>
           )}
@@ -1067,7 +1231,99 @@ function LedgerView({ onViewInvoice }) {
       )}
 
       {/* Ledger Results */}
-      {ledger && (
+      {ledger && isExpenseType && (
+        <div>
+          {/* Expense Head Summary Cards */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px', marginBottom: '16px' }}>
+            <div style={{ background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '10px', padding: '12px 16px' }}>
+              <div style={{ fontSize: '10.5px', color: '#64748b', textTransform: 'uppercase', fontWeight: '600' }}>
+                Total {isIncomeHead ? 'Income (Receipts)' : 'Expense (Payments)'}
+              </div>
+              <div style={{ fontSize: '18px', fontWeight: '800', color: isIncomeHead ? '#34d399' : '#fb7185', marginTop: '3px' }}>
+                {fmtINR(ledger.summary?.totalIncurred || 0)}
+              </div>
+            </div>
+            <div style={{ background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '10px', padding: '12px 16px' }}>
+              <div style={{ fontSize: '10.5px', color: '#64748b', textTransform: 'uppercase', fontWeight: '600' }}>
+                Cash {isIncomeHead ? 'Inflow' : 'Outflow'}
+              </div>
+              <div style={{ fontSize: '18px', fontWeight: '700', color: '#f59e0b', marginTop: '3px' }}>
+                {fmtINR(ledger.summary?.totalCash || 0)}
+              </div>
+            </div>
+            <div style={{ background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '10px', padding: '12px 16px' }}>
+              <div style={{ fontSize: '10.5px', color: '#64748b', textTransform: 'uppercase', fontWeight: '600' }}>
+                Bank {isIncomeHead ? 'Inflow' : 'Outflow'}
+              </div>
+              <div style={{ fontSize: '18px', fontWeight: '700', color: '#38bdf8', marginTop: '3px' }}>
+                {fmtINR(ledger.summary?.totalBank || 0)}
+              </div>
+            </div>
+            <div style={{ background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '10px', padding: '12px 16px' }}>
+              <div style={{ fontSize: '10.5px', color: '#64748b', textTransform: 'uppercase', fontWeight: '600' }}>Total Vouchers</div>
+              <div style={{ fontSize: '18px', fontWeight: '700', color: '#f1f5f9', marginTop: '3px' }}>
+                {ledger.summary?.totalCount || 0}
+              </div>
+            </div>
+          </div>
+
+          {/* Transactions Table for Expense / Income */}
+          <div style={{
+            background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(255,255,255,0.06)',
+            borderRadius: '12px', overflow: 'hidden'
+          }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12.5px' }}>
+              <thead>
+                <tr style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                  <th style={{ padding: '10px 14px', textAlign: 'left', color: '#94a3b8' }}>Date</th>
+                  <th style={{ padding: '10px 14px', textAlign: 'left', color: '#94a3b8' }}>Voucher #</th>
+                  <th style={{ padding: '10px 14px', textAlign: 'left', color: '#94a3b8' }}>Mode</th>
+                  <th style={{ padding: '10px 14px', textAlign: 'left', color: '#94a3b8' }}>Bank / Account</th>
+                  <th style={{ padding: '10px 14px', textAlign: 'left', color: '#94a3b8' }}>Ref / Cheque #</th>
+                  <th style={{ padding: '10px 14px', textAlign: 'left', color: '#94a3b8' }}>Remarks</th>
+                  <th style={{ padding: '10px 14px', textAlign: 'right', color: '#94a3b8' }}>Amount ₹</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!ledger.transactions || ledger.transactions.length === 0 ? (
+                  <tr>
+                    <td colSpan="7" style={{ textAlign: 'center', padding: '30px', color: '#64748b' }}>
+                      No transactions found for this head in the selected date range.
+                    </td>
+                  </tr>
+                ) : ledger.transactions.map((t, idx) => (
+                  <tr key={t.id || idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                    <td style={{ padding: '10px 14px', color: '#cbd5e1' }}>{t.date}</td>
+                    <td style={{ padding: '10px 14px', fontFamily: 'monospace', color: '#94a3b8', fontSize: '11.5px' }}>
+                      {t.doc_no || '—'}
+                    </td>
+                    <td style={{ padding: '10px 14px' }}>
+                      <span style={{ fontSize: '10px', color: '#38bdf8', background: 'rgba(56,189,248,0.1)', padding: '2px 6px', borderRadius: '4px' }}>
+                        {t.payment_mode || 'Bank'}
+                      </span>
+                    </td>
+                    <td style={{ padding: '10px 14px', color: '#94a3b8', fontSize: '12px' }}>
+                      {t.bank_name || (t.payment_mode === 'Cash' ? 'Cash in Hand' : '—')}
+                    </td>
+                    <td style={{ padding: '10px 14px', fontFamily: 'monospace', color: '#94a3b8', fontSize: '11px' }}>
+                      {t.reference_no || '—'}
+                    </td>
+                    <td style={{ padding: '10px 14px', color: '#e2e8f0', maxWidth: '240px' }}>
+                      {t.description || '—'}
+                    </td>
+                    <td style={{ padding: '10px 14px', textAlign: 'right', fontWeight: '700', fontFamily: 'monospace', color: isIncomeHead ? '#34d399' : '#fb7185' }}>
+                      {fmtINR(t.amount)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Party Ledger Results */}
+      {ledger && !isExpenseType && (
         <div>
           {/* Summary Cards */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px', marginBottom: '16px' }}>
@@ -1419,23 +1675,42 @@ export default function ManagerPanel({ user, onLogout }) {
     productions: [],
     sales: [],
     consumptions: [],
-    payments: []
+    payments: [],
+    orders: []
   });
   const [loading, setLoading] = useState(false);
   const [todayStats, setTodayStats] = useState(null);
 
   const managerName = user?.managerName || user?.display_name || user?.name || 'Manager';
 
+  // Active manager permissions (allowed modules)
+  const allowedModules = (Array.isArray(user?.permissions) && user.permissions.length > 0)
+    ? user.permissions
+    : [
+        'orders', 'purchases', 'consumptions', 'productions', 'sales',
+        'payments', 'attendance', 'ledger', 'outstanding', 'masters'
+      ];
+
+  const can = (key) => allowedModules.includes(key);
+
+  // Safety: if manager tries to open an unassigned tab, revert to dashboard
+  useEffect(() => {
+    if (activeTab !== 'dashboard' && !can(activeTab)) {
+      setActiveTab('dashboard');
+    }
+  }, [activeTab, allowedModules]);
+
   const loadEntries = async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams({ managerName }).toString();
-      const [purchases, productions, sales, consumptions, payments] = await Promise.all([
-        api.getPurchases(params).catch(() => []),
-        api.getProductions(params).catch(() => []),
-        api.getSales(params).catch(() => []),
-        api.getConsumptionBatches().catch(() => []),
-        api.getPayments().catch(() => [])
+      const [purchases, productions, sales, consumptions, payments, orders] = await Promise.all([
+        can('purchases') ? api.getPurchases(params).catch(() => []) : Promise.resolve([]),
+        can('productions') ? api.getProductions(params).catch(() => []) : Promise.resolve([]),
+        can('sales') ? api.getSales(params).catch(() => []) : Promise.resolve([]),
+        can('consumptions') ? api.getConsumptionBatches().catch(() => []) : Promise.resolve([]),
+        can('payments') ? api.getPayments().catch(() => []) : Promise.resolve([]),
+        can('orders') ? api.getProductionOrders().catch(() => []) : Promise.resolve([])
       ]);
 
       const myConsumptions = (consumptions || []).filter(c => !c.manager_name || c.manager_name === managerName || c.created_by === managerName);
@@ -1446,7 +1721,8 @@ export default function ManagerPanel({ user, onLogout }) {
         productions: productions || [],
         sales: sales || [],
         consumptions: myConsumptions,
-        payments: myPayments
+        payments: myPayments,
+        orders: orders || []
       });
 
       // Compute today's stats locally
@@ -1514,19 +1790,22 @@ export default function ManagerPanel({ user, onLogout }) {
 
         {/* Navigation */}
         <NavItem icon={BarChart2}    label="Dashboard"             active={activeTab === 'dashboard'}     onClick={() => setActiveTab('dashboard')} />
-        <NavItem icon={ShoppingBag} label="Raw Material Purchases" active={activeTab === 'purchases'}   onClick={() => setActiveTab('purchases')} badge={entries.purchases.length || undefined} />
-        <NavItem icon={Layers}      label="Material Issues (RM)"   active={activeTab === 'consumptions'}  onClick={() => setActiveTab('consumptions')} badge={entries.consumptions.length || undefined} />
-        <NavItem icon={Factory}     label="Daily Production"      active={activeTab === 'productions'}   onClick={() => setActiveTab('productions')} badge={entries.productions.length || undefined} />
-        <NavItem icon={Truck}       label="Sales & Tax Invoices"   active={activeTab === 'sales'}         onClick={() => setActiveTab('sales')} badge={entries.sales.length || undefined} />
-        <NavItem icon={CreditCard}  label="Receipts & Payments"    active={activeTab === 'payments'}      onClick={() => setActiveTab('payments')} badge={entries.payments.length || undefined} />
-        <NavItem icon={CalendarDays} label="Staff Attendance"       active={activeTab === 'attendance'}    onClick={() => setActiveTab('attendance')} />
+        {can('orders') && <NavItem icon={ClipboardList} label="Production Orders"    active={activeTab === 'orders'}        onClick={() => setActiveTab('orders')} badge={entries.orders?.length || undefined} />}
+        {can('purchases') && <NavItem icon={ShoppingBag} label="Raw Material Purchases" active={activeTab === 'purchases'}   onClick={() => setActiveTab('purchases')} badge={entries.purchases.length || undefined} />}
+        {can('consumptions') && <NavItem icon={Layers}      label="Material Issues (RM)"   active={activeTab === 'consumptions'}  onClick={() => setActiveTab('consumptions')} badge={entries.consumptions.length || undefined} />}
+        {can('productions') && <NavItem icon={Factory}     label="Daily Production"      active={activeTab === 'productions'}   onClick={() => setActiveTab('productions')} badge={entries.productions.length || undefined} />}
+        {can('sales') && <NavItem icon={Truck}       label="Sales & Tax Invoices"   active={activeTab === 'sales'}         onClick={() => setActiveTab('sales')} badge={entries.sales.length || undefined} />}
+        {can('payments') && <NavItem icon={CreditCard}  label="Receipts & Payments"    active={activeTab === 'payments'}      onClick={() => setActiveTab('payments')} badge={entries.payments.length || undefined} />}
+        {can('attendance') && <NavItem icon={CalendarDays} label="Staff Attendance"       active={activeTab === 'attendance'}    onClick={() => setActiveTab('attendance')} />}
 
-        <div style={{ height: '1px', background: 'rgba(255,255,255,0.05)', margin: '8px 4px' }} />
+        {(can('ledger') || can('outstanding') || can('masters')) && (
+          <div style={{ height: '1px', background: 'rgba(255,255,255,0.05)', margin: '8px 4px' }} />
+        )}
 
-        {/* New additions: Party Ledgers, Outstanding, Masters */}
-        <NavItem icon={BookOpen}      label="Party Ledgers"          active={activeTab === 'ledger'}        onClick={() => setActiveTab('ledger')} />
-        <NavItem icon={ClipboardList} label="Outstanding Summary"    active={activeTab === 'outstanding'}   onClick={() => setActiveTab('outstanding')} />
-        <NavItem icon={Building2}     label="Masters (Create Only)"  active={activeTab === 'masters'}       onClick={() => setActiveTab('masters')} />
+        {/* Party Ledgers, Outstanding, Masters */}
+        {can('ledger') && <NavItem icon={BookOpen}      label="Party Ledgers"          active={activeTab === 'ledger'}        onClick={() => setActiveTab('ledger')} />}
+        {can('outstanding') && <NavItem icon={Clock}         label="Outstanding Summary"    active={activeTab === 'outstanding'}   onClick={() => setActiveTab('outstanding')} />}
+        {can('masters') && <NavItem icon={Building2}     label="Masters (Create Only)"  active={activeTab === 'masters'}       onClick={() => setActiveTab('masters')} />}
 
         <div style={{ flex: 1 }} />
 
@@ -1576,66 +1855,122 @@ export default function ManagerPanel({ user, onLogout }) {
                 Quick Create Entries
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px' }}>
-                <button
-                  onClick={() => setModal('purchase')}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '10px',
-                    padding: '12px 14px', borderRadius: '10px', border: '1px solid rgba(56,189,248,0.25)',
-                    background: 'rgba(56,189,248,0.08)', color: '#38bdf8', cursor: 'pointer', fontWeight: '600', fontSize: '13px'
-                  }}
-                >
-                  <Plus size={16} /> + RM Purchase
-                </button>
-                <button
-                  onClick={() => setModal('consumption')}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '10px',
-                    padding: '12px 14px', borderRadius: '10px', border: '1px solid rgba(245,158,11,0.25)',
-                    background: 'rgba(245,158,11,0.08)', color: '#f59e0b', cursor: 'pointer', fontWeight: '600', fontSize: '13px'
-                  }}
-                >
-                  <Plus size={16} /> + Issue RM Material
-                </button>
-                <button
-                  onClick={() => setModal('production')}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '10px',
-                    padding: '12px 14px', borderRadius: '10px', border: '1px solid rgba(168,85,247,0.25)',
-                    background: 'rgba(168,85,247,0.08)', color: '#c084fc', cursor: 'pointer', fontWeight: '600', fontSize: '13px'
-                  }}
-                >
-                  <Plus size={16} /> + Daily Production
-                </button>
-                <button
-                  onClick={() => setModal('sales')}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '10px',
-                    padding: '12px 14px', borderRadius: '10px', border: '1px solid rgba(52,211,153,0.25)',
-                    background: 'rgba(52,211,153,0.08)', color: '#34d399', cursor: 'pointer', fontWeight: '600', fontSize: '13px'
-                  }}
-                >
-                  <Plus size={16} /> + Sales & Invoice
-                </button>
-                <button
-                  onClick={() => setModal('payment-customer')}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '10px',
-                    padding: '12px 14px', borderRadius: '10px', border: '1px solid rgba(99,102,241,0.25)',
-                    background: 'rgba(99,102,241,0.08)', color: '#818cf8', cursor: 'pointer', fontWeight: '600', fontSize: '13px'
-                  }}
-                >
-                  <Plus size={16} /> + Customer Receipt
-                </button>
-                <button
-                  onClick={() => setActiveTab('attendance')}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '10px',
-                    padding: '12px 14px', borderRadius: '10px', border: '1px solid rgba(168,85,247,0.25)',
-                    background: 'rgba(168,85,247,0.08)', color: '#c084fc', cursor: 'pointer', fontWeight: '600', fontSize: '13px'
-                  }}
-                >
-                  <CalendarDays size={16} /> + Staff Attendance
-                </button>
+                {can('orders') && (
+                  <button
+                    onClick={() => setModal('production-order')}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '10px',
+                      padding: '12px 14px', borderRadius: '10px', border: '1px solid rgba(168,85,247,0.3)',
+                      background: 'rgba(168,85,247,0.12)', color: '#c084fc', cursor: 'pointer', fontWeight: '700', fontSize: '13px'
+                    }}
+                  >
+                    <Plus size={16} /> + Production Order
+                  </button>
+                )}
+                {can('purchases') && (
+                  <button
+                    onClick={() => setModal('purchase')}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '10px',
+                      padding: '12px 14px', borderRadius: '10px', border: '1px solid rgba(56,189,248,0.25)',
+                      background: 'rgba(56,189,248,0.08)', color: '#38bdf8', cursor: 'pointer', fontWeight: '600', fontSize: '13px'
+                    }}
+                  >
+                    <Plus size={16} /> + RM Purchase
+                  </button>
+                )}
+                {can('consumptions') && (
+                  <button
+                    onClick={() => setModal('consumption')}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '10px',
+                      padding: '12px 14px', borderRadius: '10px', border: '1px solid rgba(245,158,11,0.25)',
+                      background: 'rgba(245,158,11,0.08)', color: '#f59e0b', cursor: 'pointer', fontWeight: '600', fontSize: '13px'
+                    }}
+                  >
+                    <Plus size={16} /> + Issue RM Material
+                  </button>
+                )}
+                {can('productions') && (
+                  <button
+                    onClick={() => setModal('production')}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '10px',
+                      padding: '12px 14px', borderRadius: '10px', border: '1px solid rgba(168,85,247,0.25)',
+                      background: 'rgba(168,85,247,0.08)', color: '#c084fc', cursor: 'pointer', fontWeight: '600', fontSize: '13px'
+                    }}
+                  >
+                    <Plus size={16} /> + Daily Production
+                  </button>
+                )}
+                {can('sales') && (
+                  <button
+                    onClick={() => setModal('sales')}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '10px',
+                      padding: '12px 14px', borderRadius: '10px', border: '1px solid rgba(52,211,153,0.25)',
+                      background: 'rgba(52,211,153,0.08)', color: '#34d399', cursor: 'pointer', fontWeight: '600', fontSize: '13px'
+                    }}
+                  >
+                    <Plus size={16} /> + Sales & Invoice
+                  </button>
+                )}
+                {can('payments') && (
+                  <>
+                    <button
+                      onClick={() => setModal('payment-customer')}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '10px',
+                        padding: '12px 14px', borderRadius: '10px', border: '1px solid rgba(99,102,241,0.25)',
+                        background: 'rgba(99,102,241,0.08)', color: '#818cf8', cursor: 'pointer', fontWeight: '600', fontSize: '13px'
+                      }}
+                    >
+                      <Plus size={16} /> + Customer Receipt
+                    </button>
+                    <button
+                      onClick={() => setModal('payment-supplier')}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '10px',
+                        padding: '12px 14px', borderRadius: '10px', border: '1px solid rgba(239,68,68,0.25)',
+                        background: 'rgba(239,68,68,0.08)', color: '#f87171', cursor: 'pointer', fontWeight: '600', fontSize: '13px'
+                      }}
+                    >
+                      <Plus size={16} /> + Supplier Payment
+                    </button>
+                    <button
+                      onClick={() => setModal('payment-expense')}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '10px',
+                        padding: '12px 14px', borderRadius: '10px', border: '1px solid rgba(244,63,94,0.25)',
+                        background: 'rgba(244,63,94,0.08)', color: '#fb7185', cursor: 'pointer', fontWeight: '600', fontSize: '13px'
+                      }}
+                    >
+                      <Plus size={16} /> + Expense Payment
+                    </button>
+                    <button
+                      onClick={() => setModal('payment-income')}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '10px',
+                        padding: '12px 14px', borderRadius: '10px', border: '1px solid rgba(16,185,129,0.25)',
+                        background: 'rgba(16,185,129,0.08)', color: '#34d399', cursor: 'pointer', fontWeight: '600', fontSize: '13px'
+                      }}
+                    >
+                      <Plus size={16} /> + Side Income
+                    </button>
+                  </>
+                )}
+                {can('attendance') && (
+                  <button
+                    onClick={() => setActiveTab('attendance')}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '10px',
+                      padding: '12px 14px', borderRadius: '10px', border: '1px solid rgba(168,85,247,0.25)',
+                      background: 'rgba(168,85,247,0.08)', color: '#c084fc', cursor: 'pointer', fontWeight: '600', fontSize: '13px'
+                    }}
+                  >
+                    <CalendarDays size={16} /> + Staff Attendance
+                  </button>
+                )}
               </div>
             </div>
 
@@ -1696,6 +2031,81 @@ export default function ManagerPanel({ user, onLogout }) {
                 ))}
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ─── PRODUCTION ORDERS TAB ─── */}
+        {activeTab === 'orders' && (
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '20px', fontWeight: '700', color: '#f1f5f9' }}>Customer Production Orders</h2>
+                <p style={{ margin: '3px 0 0', fontSize: '12px', color: '#64748b' }}>Customer work orders registered for factory manufacturing</p>
+              </div>
+              <button
+                onClick={() => setModal('production-order')}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '6px',
+                  background: 'linear-gradient(135deg, #9333ea, #6366f1)',
+                  color: '#fff', border: 'none', borderRadius: '8px',
+                  padding: '9px 16px', fontSize: '13px', fontWeight: '700', cursor: 'pointer'
+                }}
+              >
+                <Plus size={15} /> New Production Order
+              </button>
+            </div>
+            {entries.orders?.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '60px', color: '#475569' }}>No production orders recorded yet.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {entries.orders?.map(o => {
+                  const statusColors = {
+                    Pending: { bg: 'rgba(245,158,11,0.15)', text: '#f59e0b' },
+                    'In-Production': { bg: 'rgba(56,189,248,0.15)', text: '#38bdf8' },
+                    Completed: { bg: 'rgba(16,185,129,0.15)', text: '#34d399' },
+                    Cancelled: { bg: 'rgba(244,63,94,0.15)', text: '#fb7185' }
+                  };
+                  const col = statusColors[o.status] || { bg: 'rgba(255,255,255,0.1)', text: '#94a3b8' };
+                  return (
+                    <div key={o.id} style={{
+                      background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(255,255,255,0.06)',
+                      borderRadius: '10px', padding: '14px 18px',
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px'
+                    }}>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ fontSize: '14px', fontWeight: '700', color: '#e2e8f0' }}>{o.order_no}</span>
+                          <span style={{
+                            fontSize: '10px', fontWeight: '700', padding: '2px 7px', borderRadius: '4px',
+                            background: col.bg, color: col.text
+                          }}>
+                            {o.status?.toUpperCase() || 'PENDING'}
+                          </span>
+                          {o.customer_order_no && (
+                            <span style={{ fontSize: '11px', color: '#94a3b8', background: 'rgba(255,255,255,0.06)', padding: '2px 6px', borderRadius: '4px' }}>
+                              Ref: {o.customer_order_no}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: '12.5px', color: '#cbd5e1', marginTop: '4px' }}>
+                          Customer: <strong style={{ color: '#fff' }}>{o.customer_name || 'Customer'}</strong> · Product: <strong style={{ color: '#c084fc' }}>{o.product_name || 'Product'}</strong>
+                        </div>
+                        <div style={{ fontSize: '11.5px', color: '#64748b', marginTop: '2px' }}>
+                          {o.gsm ? `${o.gsm} GSM ` : ''}{o.size ? `· Size: ${o.size} ` : ''}{o.delivery_date ? `· Target Date: ${o.delivery_date} ` : ''}{o.remarks ? `· (${o.remarks})` : ''}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: '16px', fontWeight: '700', color: '#a855f7' }}>
+                          {fmt(o.required_quantity)} {o.unit || 'KG'}
+                        </div>
+                        <div style={{ fontSize: '11px', color: '#64748b' }}>Date: {o.order_date}</div>
+                        <div style={{ fontSize: '10px', color: '#475569', marginTop: '2px' }}>By: {o.created_by || 'Manager'}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
@@ -1922,7 +2332,7 @@ export default function ManagerPanel({ user, onLogout }) {
                 <h2 style={{ margin: 0, fontSize: '20px', fontWeight: '700', color: '#f1f5f9' }}>Receipts & Payments</h2>
                 <p style={{ margin: '3px 0 0', fontSize: '12px', color: '#64748b' }}>Cash, UPI, Cheque, and Bank transfers logged under your account</p>
               </div>
-              <div style={{ display: 'flex', gap: '8px' }}>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                 <button
                   onClick={() => setModal('payment-customer')}
                   style={{
@@ -1945,6 +2355,28 @@ export default function ManagerPanel({ user, onLogout }) {
                 >
                   <Plus size={14} /> Supplier Payment
                 </button>
+                <button
+                  onClick={() => setModal('payment-expense')}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '6px',
+                    background: 'linear-gradient(135deg, #e11d48, #be123c)',
+                    color: '#fff', border: 'none', borderRadius: '8px',
+                    padding: '8px 14px', fontSize: '12.5px', fontWeight: '700', cursor: 'pointer'
+                  }}
+                >
+                  <Plus size={14} /> Expense Payment
+                </button>
+                <button
+                  onClick={() => setModal('payment-income')}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '6px',
+                    background: 'linear-gradient(135deg, #0d9488, #0f766e)',
+                    color: '#fff', border: 'none', borderRadius: '8px',
+                    padding: '8px 14px', fontSize: '12.5px', fontWeight: '700', cursor: 'pointer'
+                  }}
+                >
+                  <Plus size={14} /> Side Income
+                </button>
               </div>
             </div>
             {entries.payments.length === 0 ? (
@@ -1952,7 +2384,12 @@ export default function ManagerPanel({ user, onLogout }) {
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 {entries.payments.map(p => {
-                  const isReceipt = (p.party_type === 'CUSTOMER');
+                  const isReceipt = (p.party_type === 'CUSTOMER' || p.party_type === 'INCOME');
+                  const badgeInfo =
+                    p.party_type === 'CUSTOMER' ? { label: 'CUSTOMER RECEIPT', bg: 'rgba(16,185,129,0.15)', color: '#34d399' } :
+                    p.party_type === 'INCOME' ? { label: 'SIDE INCOME', bg: 'rgba(13,148,136,0.18)', color: '#2dd4bf' } :
+                    p.party_type === 'EXPENSE' ? { label: 'EXPENSE PAYMENT', bg: 'rgba(225,29,72,0.15)', color: '#fb7185' } :
+                    { label: 'SUPPLIER PAYMENT', bg: 'rgba(244,63,94,0.15)', color: '#fb7185' };
                   return (
                     <div key={p.id} style={{
                       background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(255,255,255,0.06)',
@@ -1964,10 +2401,10 @@ export default function ManagerPanel({ user, onLogout }) {
                           <span style={{ fontSize: '13.5px', fontWeight: '700', color: '#e2e8f0' }}>{p.payment_code}</span>
                           <span style={{
                             fontSize: '10px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px',
-                            background: isReceipt ? 'rgba(16,185,129,0.15)' : 'rgba(244,63,94,0.15)',
-                            color: isReceipt ? '#34d399' : '#fb7185'
+                            background: badgeInfo.bg,
+                            color: badgeInfo.color
                           }}>
-                            {isReceipt ? 'CUSTOMER RECEIPT' : 'SUPPLIER PAYMENT'}
+                            {badgeInfo.label}
                           </span>
                           <span style={{ fontSize: '10px', color: '#94a3b8', background: 'rgba(255,255,255,0.06)', padding: '2px 6px', borderRadius: '4px' }}>
                             {p.payment_mode}
@@ -2056,10 +2493,23 @@ export default function ManagerPanel({ user, onLogout }) {
           onSuccess={handleEntrySuccess}
         />
       )}
-      {(modal === 'payment-customer' || modal === 'payment-supplier') && (
+      {modal === 'production-order' && (
+        <ProductionOrderModal
+          isOpen={true}
+          managerName={managerName}
+          onClose={() => setModal(null)}
+          onSuccess={handleEntrySuccess}
+        />
+      )}
+      {(modal === 'payment-customer' || modal === 'payment-supplier' || modal === 'payment-expense' || modal === 'payment-income') && (
         <PaymentEntryModal
           isOpen={true}
-          defaultType={modal === 'payment-customer' ? 'CUSTOMER' : 'SUPPLIER'}
+          defaultType={
+            modal === 'payment-customer' ? 'CUSTOMER' :
+            modal === 'payment-supplier' ? 'SUPPLIER' :
+            modal === 'payment-expense' ? 'EXPENSE' :
+            modal === 'payment-income' ? 'INCOME' : 'CUSTOMER'
+          }
           managerName={managerName}
           onClose={() => setModal(null)}
           onSuccess={handleEntrySuccess}

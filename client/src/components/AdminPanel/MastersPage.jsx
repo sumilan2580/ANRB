@@ -1,6 +1,25 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Edit2, Trash2, RefreshCw, Package, Layers, Users, UserCheck, Cpu, Clock, AlertTriangle, Building2, Save, Key, ShieldCheck, UserPlus, Lock, ChevronDown } from 'lucide-react';
+import {
+  Plus, Edit2, Trash2, RefreshCw, Package, Layers, Users, UserCheck,
+  Cpu, Clock, AlertTriangle, Building2, Save, Key, ShieldCheck, UserPlus,
+  Lock, ChevronDown, DollarSign, ClipboardList, ShoppingBag, Factory,
+  Truck, CreditCard, CalendarDays, BookOpen, CheckSquare, Square, Sliders,
+  CheckCircle2, ShieldAlert
+} from 'lucide-react';
 import { api } from '../../api';
+
+export const MANAGER_SECTIONS = [
+  { key: 'orders', label: 'Production Orders', icon: ClipboardList, desc: 'Customer production orders entry & tracking' },
+  { key: 'purchases', label: 'RM Purchases', icon: ShoppingBag, desc: 'Raw material purchase invoices entry' },
+  { key: 'consumptions', label: 'Material Issues (RM)', icon: Layers, desc: 'Raw materials issued to machines / production floor' },
+  { key: 'productions', label: 'Daily Production', icon: Factory, desc: 'Daily finished goods production batches' },
+  { key: 'sales', label: 'Sales & Invoices', icon: Truck, desc: 'Sales invoices, dispatch & billing entries' },
+  { key: 'payments', label: 'Receipts & Payments', icon: CreditCard, desc: 'Cash & bank receipts, payments, expense & side income' },
+  { key: 'attendance', label: 'Staff Attendance', icon: CalendarDays, desc: 'Daily factory staff attendance marking' },
+  { key: 'ledger', label: 'Party Ledgers', icon: BookOpen, desc: 'Customer, supplier, expense & income ledgers' },
+  { key: 'outstanding', label: 'Outstanding Summary', icon: Clock, desc: 'Customer & supplier balances and dues summary' },
+  { key: 'masters', label: 'Masters (Create Only)', icon: Building2, desc: 'Create customers, suppliers, products, expense heads' }
+];
 
 // ─── Searchable Combobox (inline for MastersPage) ───────────────────────────
 function SearchableSelect({ value, onChange, options, placeholder = 'Search or type...', required = false }) {
@@ -251,14 +270,21 @@ export default function MastersPage() {
   const [managers, setManagers]           = useState([]);
   const [staff, setStaff]                 = useState([]);
   const [bankAccounts, setBankAccounts]   = useState([]);
+  const [expenseHeads, setExpenseHeads]   = useState([]);
   const [managerUsers, setManagerUsers]   = useState([]);
   const [showUserModal, setShowUserModal] = useState(false);
-  const [newUserData, setNewUserData]     = useState({ username: '', password: '', display_name: '', phone: '' });
+  const [newUserData, setNewUserData]     = useState({ username: '', password: '', display_name: '', phone: '', permissions: MANAGER_SECTIONS.map(s => s.key) });
   const [userLoading, setUserLoading]     = useState(false);
   const [userError, setUserError]         = useState('');
   const [resetPwdUser, setResetPwdUser]   = useState(null);
   const [newPassword, setNewPassword]     = useState('');
   const [deleteUserTarget, setDeleteUserTarget] = useState(null);
+  // Manager Permissions modal
+  const [permissionsTarget, setPermissionsTarget]     = useState(null); // web user or floor manager
+  const [permissionsType, setPermissionsType]         = useState('web'); // 'web' | 'floor'
+  const [selectedPermissions, setSelectedPermissions] = useState([]);
+  const [permissionsLoading, setPermissionsLoading]   = useState(false);
+  const [permissionsError, setPermissionsError]       = useState('');
   const [companySettings, setCompanySettings] = useState({
     company_name: '',
     company_gstin: '',
@@ -304,6 +330,8 @@ export default function MastersPage() {
           setManagers(data.managers || []);
           if (data.staff) setStaff(data.staff);
           setBankAccounts(data.bankAccounts || []);
+          if (data.expenseHeads) setExpenseHeads(data.expenseHeads);
+          else api.getExpenseHeads().then(setExpenseHeads).catch(() => []);
           setManagerUsers(data.managerUsers || []);
           if (data.companySettings) {
             setCompanySettings(prev => ({ ...prev, ...data.companySettings }));
@@ -315,7 +343,7 @@ export default function MastersPage() {
       }
 
       // 2. Resilient fallback with safe individual catch handlers
-      const [rm, fg, cust, supp, mach, sh, mgrs, banks, comp, mgrUsers, stf] = await Promise.all([
+      const [rm, fg, cust, supp, mach, sh, mgrs, banks, comp, mgrUsers, stf, eh] = await Promise.all([
         api.getRawMaterials().catch(() => []),
         api.getFinishedGoods().catch(() => []),
         api.getCustomers().catch(() => []),
@@ -326,7 +354,8 @@ export default function MastersPage() {
         api.getBankAccounts().catch(() => []),
         api.getCompanySettings().catch(() => ({})),
         api.getManagerUsers().catch(() => []),
-        api.getStaff().catch(() => [])
+        api.getStaff().catch(() => []),
+        api.getExpenseHeads().catch(() => [])
       ]);
       setRawMaterials(rm || []);
       setFinishedGoods(fg || []);
@@ -336,6 +365,7 @@ export default function MastersPage() {
       setShifts(sh || []);
       setManagers(mgrs || []);
       setBankAccounts(banks || []);
+      setExpenseHeads(eh || []);
       setManagerUsers(mgrUsers || []);
       setStaff(stf || []);
       if (comp) {
@@ -359,13 +389,47 @@ export default function MastersPage() {
     try {
       await api.createManagerUser(newUserData);
       setShowUserModal(false);
-      setNewUserData({ username: '', password: '', display_name: '', phone: '' });
+      setNewUserData({ username: '', password: '', display_name: '', phone: '', permissions: MANAGER_SECTIONS.map(s => s.key) });
       showSuccess('Manager web login account created successfully!');
       await loadAll();
     } catch (err) {
       setUserError(err.message || 'Failed to create manager user');
     } finally {
       setUserLoading(false);
+    }
+  };
+
+  const openPermissionsModal = (target, type = 'web') => {
+    setPermissionsTarget(target);
+    setPermissionsType(type);
+    setPermissionsError('');
+    const existing = Array.isArray(target.permissions) && target.permissions.length > 0
+      ? target.permissions
+      : MANAGER_SECTIONS.map(s => s.key);
+    setSelectedPermissions(existing);
+  };
+
+  const handleSavePermissions = async () => {
+    if (!permissionsTarget) return;
+    if (selectedPermissions.length === 0) {
+      setPermissionsError('Please select at least 1 section/module for the manager.');
+      return;
+    }
+    setPermissionsLoading(true);
+    setPermissionsError('');
+    try {
+      if (permissionsType === 'web') {
+        await api.updateManagerUserPermissions(permissionsTarget.id, selectedPermissions);
+      } else {
+        await api.updateManagerPermissions(permissionsTarget.id, selectedPermissions);
+      }
+      showSuccess(`Permissions updated successfully for "${permissionsTarget.display_name || permissionsTarget.name || permissionsTarget.username}"! (${selectedPermissions.length} sections active)`);
+      setPermissionsTarget(null);
+      await loadAll();
+    } catch (err) {
+      setPermissionsError(err.message || 'Failed to update permissions');
+    } finally {
+      setPermissionsLoading(false);
     }
   };
 
@@ -447,6 +511,7 @@ export default function MastersPage() {
       if (type === 'machine')  await api.updateMachine(id, { status: newStatus });
       if (type === 'manager')  await api.updateManagerStatus(id, newStatus);
       if (type === 'staff')    await api.updateStaff(id, { status: newStatus });
+      if (type === 'expense-head') await api.updateExpenseHead(id, { status: newStatus });
       await loadAll();
       showSuccess(`Status updated to ${newStatus}`);
     } catch (err) {
@@ -465,6 +530,7 @@ export default function MastersPage() {
     if (tab === 'shifts')         return { name: record.name, startTime: record.start_time, endTime: record.end_time };
     if (tab === 'managers')       return { name: record.name, phone: record.phone };
     if (tab === 'staff')          return { name: record.name, designation: record.designation || '', department: record.department || '', phone: record.phone || '', status: record.status || 'active' };
+    if (tab === 'expense-heads')  return { name: record.name, type: record.type, category: record.category, description: record.description, status: record.status };
     return {};
   };
 
@@ -483,6 +549,7 @@ export default function MastersPage() {
       else if (tab === 'managers')       await api.updateManager(editRecord.id, data);
       else if (tab === 'banks')          await api.updateBankAccount(editRecord.id, data);
       else if (tab === 'staff')          await api.updateStaff(editRecord.id, data);
+      else if (tab === 'expense-heads')  await api.updateExpenseHead(editRecord.id, data);
       showSuccess('Record updated successfully!');
     } else {
       if (tab === 'raw-materials')  await api.createRawMaterial(data);
@@ -494,6 +561,7 @@ export default function MastersPage() {
       else if (tab === 'managers')       await api.createManager(data);
       else if (tab === 'banks')          await api.createBankAccount(data);
       else if (tab === 'staff')          await api.createStaff(data);
+      else if (tab === 'expense-heads')  await api.createExpenseHead(data);
       showSuccess('Record added successfully!');
     }
     await loadAll();
@@ -515,6 +583,7 @@ export default function MastersPage() {
       else if (tab === 'managers')       await api.deleteManager(id);
       else if (tab === 'banks')          await api.deleteBankAccount(id);
       else if (tab === 'staff')          await api.deleteStaff(id);
+      else if (tab === 'expense-heads')  await api.deleteExpenseHead(id);
       setDeleteTarget(null);
       await loadAll();
       showSuccess('Record deleted (or deactivated) successfully!');
@@ -532,6 +601,7 @@ export default function MastersPage() {
     { id: 'customers', label: 'Customers', icon: <Users size={14} />, count: customers.length },
     { id: 'suppliers', label: 'Suppliers', icon: <UserCheck size={14} />, count: suppliers.length },
     { id: 'banks', label: 'Bank Master', icon: <Building2 size={14} />, count: bankAccounts.length },
+    { id: 'expense-heads', label: 'Expense & Income Heads', icon: <DollarSign size={14} />, count: expenseHeads.length },
     { id: 'machines', label: 'Machines', icon: <Cpu size={14} />, count: machines.length },
     { id: 'shifts', label: 'Shifts', icon: <Clock size={14} />, count: shifts.length },
     { id: 'staff', label: 'Staff', icon: <Users size={14} />, count: staff.length },
@@ -658,12 +728,32 @@ export default function MastersPage() {
     ]}
   ];
 
+  const expenseHeadFields = [
+    { key: 'name', label: 'Head / Account Name *', placeholder: 'e.g. Factory Electricity Bill, Diesel Fuel, Scrap Sale', required: true },
+    { key: 'type', label: 'Type (प्रकार) *', type: 'select', defaultValue: 'EXPENSE', required: true, options: [
+      { value: 'EXPENSE', label: 'EXPENSE (खर्चा)' },
+      { value: 'INCOME', label: 'INCOME (साइड आमदनी / Scrap Sale)' }
+    ]},
+    { key: 'category', label: 'Category / Group', type: 'select', defaultValue: 'Direct Expense', options: [
+      { value: 'Direct Expense', label: 'Direct Expense (सीधा फैक्ट्री खर्च)' },
+      { value: 'Indirect Expense', label: 'Indirect Expense (ऑफिस/प्रशासनिक खर्च)' },
+      { value: 'Side Income', label: 'Side Income (स्क्रैप/अतिरिक्त आमदनी)' },
+      { value: 'Other', label: 'Other' }
+    ]},
+    { key: 'description', label: 'Description / Notes', placeholder: 'Optional details about this head' },
+    { key: 'status', label: 'Status', type: 'select', defaultValue: 'active', options: [
+      { value: 'active', label: 'Active' },
+      { value: 'inactive', label: 'Inactive' }
+    ]}
+  ];
+
   const currentFields = () => {
     if (tab === 'raw-materials')  return rmFields;
     if (tab === 'finished-goods') return fgFields;
     if (tab === 'customers')      return custFields;
     if (tab === 'suppliers')      return suppFields;
     if (tab === 'banks')          return bankFields;
+    if (tab === 'expense-heads')  return expenseHeadFields;
     if (tab === 'machines')       return machFields;
     if (tab === 'shifts')         return shiftFields;
     if (tab === 'managers')       return mgrFields;
@@ -930,6 +1020,56 @@ export default function MastersPage() {
               ))}
             </tbody>
           </table>
+        ) : tab === 'expense-heads' ? (
+          <table className="custom-table">
+            <thead>
+              <tr>
+                <th>Code</th>
+                <th>Head / Account Name</th>
+                <th>Type</th>
+                <th>Category / Group</th>
+                <th>Description / Details</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {expenseHeads.length === 0 ? (
+                <tr><td colSpan="7" style={{ textAlign: 'center', padding: '30px', color: 'var(--text-muted)' }}>No expense or income heads configured</td></tr>
+              ) : expenseHeads.map(eh => (
+                <tr key={eh.id}>
+                  <td><span className="pill pill-cyan num-mono">{eh.code}</span></td>
+                  <td style={{ fontWeight: '600' }}>{eh.name}</td>
+                  <td>
+                    <span className={`pill ${eh.type === 'INCOME' ? 'pill-emerald' : 'pill-rose'}`} style={{ fontWeight: '700' }}>
+                      {eh.type === 'INCOME' ? 'INCOME (आमदनी)' : 'EXPENSE (खर्चा)'}
+                    </span>
+                  </td>
+                  <td><span className="pill pill-indigo" style={{ fontSize: '11px' }}>{eh.category || 'Direct Expense'}</span></td>
+                  <td style={{ fontSize: '12px', color: 'var(--text-muted)', maxWidth: '280px' }}>{eh.description || '—'}</td>
+                  <td>
+                    <span
+                      className={`pill ${eh.status === 'active' ? 'pill-emerald' : 'pill-rose'}`}
+                      style={{ cursor: 'pointer' }}
+                      onClick={() => toggleStatus('expense-head', eh.id, eh.status)}
+                      title="Click to toggle status"
+                    >
+                      {eh.status}
+                    </span>
+                  </td>
+                  <td>
+                    <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                      <button className="btn btn-outline btn-sm" onClick={() => toggleStatus('expense-head', eh.id, eh.status)}>
+                        {eh.status === 'active' ? 'Deact.' : 'Activate'}
+                      </button>
+                      <ActionBtn icon={<Edit2 size={12} />} color="var(--primary)" title="Edit" onClick={() => openEdit({ ...eh, ...editFieldMap(eh) })} />
+                      <ActionBtn icon={<Trash2 size={12} />} color="var(--rose)" title="Delete" onClick={() => confirmDelete(eh.id, eh.name)} />
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         ) : tab === 'machines' ? (
           <table className="custom-table">
             <thead>
@@ -1073,7 +1213,8 @@ export default function MastersPage() {
                     <tr>
                       <th>Username</th>
                       <th>Display Name</th>
-                      <th>Role & Permissions</th>
+                      <th>Role</th>
+                      <th>Assigned Sections</th>
                       <th>Phone</th>
                       <th>Status</th>
                       <th>Created</th>
@@ -1081,62 +1222,97 @@ export default function MastersPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {managerUsers.map(u => (
-                      <tr key={u.id}>
-                        <td>
-                          <span className="num-mono" style={{ fontWeight: '700', color: 'var(--primary)' }}>
-                            {u.username}
-                          </span>
-                        </td>
-                        <td style={{ fontWeight: '600' }}>{u.display_name || '—'}</td>
-                        <td>
-                          <span className="pill pill-cyan" style={{ fontSize: '10px' }}>
-                            ENTRY ONLY
-                          </span>
-                        </td>
-                        <td style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{u.phone || '—'}</td>
-                        <td>
-                          <span className={`pill ${u.status === 'active' ? 'pill-emerald' : 'pill-rose'}`}>
-                            {u.status}
-                          </span>
-                        </td>
-                        <td style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
-                          {new Date(u.created_at).toLocaleDateString('en-IN')}
-                        </td>
-                        <td>
-                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                    {managerUsers.map(u => {
+                      const activeCount = Array.isArray(u.permissions) ? u.permissions.length : 10;
+                      const isFull = activeCount === MANAGER_SECTIONS.length;
+                      return (
+                        <tr key={u.id}>
+                          <td>
+                            <span className="num-mono" style={{ fontWeight: '700', color: 'var(--primary)' }}>
+                              {u.username}
+                            </span>
+                          </td>
+                          <td style={{ fontWeight: '600' }}>{u.display_name || '—'}</td>
+                          <td>
+                            <span className="pill pill-cyan" style={{ fontSize: '10px' }}>
+                              ENTRY ONLY
+                            </span>
+                          </td>
+                          <td>
                             <button
-                              className="btn btn-sm"
+                              type="button"
+                              onClick={() => openPermissionsModal(u, 'web')}
                               style={{
-                                padding: '3px 8px',
+                                cursor: 'pointer',
                                 fontSize: '11px',
-                                fontWeight: '600',
-                                color: u.status === 'active' ? '#ff6b81' : '#2ed573',
-                                borderColor: u.status === 'active' ? 'rgba(255,107,129,0.3)' : 'rgba(46,213,115,0.3)',
-                                background: 'transparent'
+                                fontWeight: '700',
+                                padding: '3px 8px',
+                                borderRadius: '6px',
+                                background: isFull ? 'rgba(16,185,129,0.12)' : 'rgba(245,158,11,0.15)',
+                                color: isFull ? '#34d399' : '#f59e0b',
+                                border: isFull ? '1px solid rgba(16,185,129,0.3)' : '1px solid rgba(245,158,11,0.3)',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '5px'
                               }}
-                              onClick={() => toggleUserStatus(u)}
+                              title="Click to customize accessible sections"
                             >
-                              {u.status === 'active' ? 'Deactivate' : 'Activate'}
+                              <ShieldCheck size={13} />
+                              {activeCount} / {MANAGER_SECTIONS.length} Sections
                             </button>
-                            <button
-                              className="btn btn-outline btn-sm"
-                              style={{ padding: '3px 8px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }}
-                              title="Reset Password"
-                              onClick={() => { setResetPwdUser(u); setNewPassword(''); setUserError(''); }}
-                            >
-                              <Key size={11} /> Reset Pwd
-                            </button>
-                            <ActionBtn
-                              icon={<Trash2 size={12} />}
-                              color="var(--rose)"
-                              title="Delete Web User"
-                              onClick={() => setDeleteUserTarget(u)}
-                            />
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                          </td>
+                          <td style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{u.phone || '—'}</td>
+                          <td>
+                            <span className={`pill ${u.status === 'active' ? 'pill-emerald' : 'pill-rose'}`}>
+                              {u.status}
+                            </span>
+                          </td>
+                          <td style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
+                            {new Date(u.created_at).toLocaleDateString('en-IN')}
+                          </td>
+                          <td>
+                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                              <button
+                                className="btn btn-outline btn-sm"
+                                style={{ padding: '3px 8px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px', color: '#c084fc', borderColor: 'rgba(168,85,247,0.3)' }}
+                                title="Configure Accessible Sections"
+                                onClick={() => openPermissionsModal(u, 'web')}
+                              >
+                                <ShieldCheck size={11} /> Sections
+                              </button>
+                              <button
+                                className="btn btn-sm"
+                                style={{
+                                  padding: '3px 8px',
+                                  fontSize: '11px',
+                                  fontWeight: '600',
+                                  color: u.status === 'active' ? '#ff6b81' : '#2ed573',
+                                  borderColor: u.status === 'active' ? 'rgba(255,107,129,0.3)' : 'rgba(46,213,115,0.3)',
+                                  background: 'transparent'
+                                }}
+                                onClick={() => toggleUserStatus(u)}
+                              >
+                                {u.status === 'active' ? 'Deactivate' : 'Activate'}
+                              </button>
+                              <button
+                                className="btn btn-outline btn-sm"
+                                style={{ padding: '3px 8px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                title="Reset Password"
+                                onClick={() => { setResetPwdUser(u); setNewPassword(''); setUserError(''); }}
+                              >
+                                <Key size={11} /> Reset Pwd
+                              </button>
+                              <ActionBtn
+                                icon={<Trash2 size={12} />}
+                                color="var(--rose)"
+                                title="Delete Web User"
+                                onClick={() => setDeleteUserTarget(u)}
+                              />
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               )}
@@ -1164,6 +1340,7 @@ export default function MastersPage() {
                   <tr>
                     <th>Manager Name</th>
                     <th>Device ID</th>
+                    <th>Assigned Sections</th>
                     <th>Phone</th>
                     <th>Purchase Count</th>
                     <th>Production Count</th>
@@ -1175,46 +1352,81 @@ export default function MastersPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {managers.map(m => (
-                    <tr key={m.id}>
-                      <td>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '700', fontSize: '12px', color: '#fff', flexShrink: 0 }}>
-                            {m.name.charAt(0).toUpperCase()}
+                  {managers.map(m => {
+                    const activeCount = Array.isArray(m.permissions) ? m.permissions.length : 10;
+                    const isFull = activeCount === MANAGER_SECTIONS.length;
+                    return (
+                      <tr key={m.id}>
+                        <td>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '700', fontSize: '12px', color: '#fff', flexShrink: 0 }}>
+                              {m.name.charAt(0).toUpperCase()}
+                            </div>
+                            <span style={{ fontWeight: '600' }}>{m.name}</span>
                           </div>
-                          <span style={{ fontWeight: '600' }}>{m.name}</span>
-                        </div>
-                      </td>
-                      <td><span className="num-mono pill pill-indigo" style={{ fontSize: '10px' }}>{m.device_id || '—'}</span></td>
-                      <td style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{m.phone || '—'}</td>
-                      <td className="num-mono" style={{ textAlign: 'center' }}>{m.purchase_count}</td>
-                      <td className="num-mono" style={{ textAlign: 'center' }}>{m.production_count}</td>
-                      <td className="num-mono" style={{ textAlign: 'center' }}>{m.sales_count}</td>
-                      <td className="num-mono" style={{ textAlign: 'right', color: 'var(--cyan)' }}>{m.total_production_kg?.toLocaleString()}</td>
-                      <td><span className={`pill ${m.status === 'active' ? 'pill-emerald' : 'pill-rose'}`}>{m.status}</span></td>
-                      <td style={{ fontSize: '11px', color: 'var(--text-dim)' }}>{new Date(m.created_at).toLocaleDateString('en-IN')}</td>
-                      <td>
-                        <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                        </td>
+                        <td><span className="num-mono pill pill-indigo" style={{ fontSize: '10px' }}>{m.device_id || '—'}</span></td>
+                        <td>
                           <button
-                            className="btn btn-sm"
+                            type="button"
+                            onClick={() => openPermissionsModal(m, 'floor')}
                             style={{
-                              padding: '3px 8px',
+                              cursor: 'pointer',
                               fontSize: '11px',
-                              fontWeight: '600',
-                              color: m.status === 'active' ? '#ff6b81' : '#2ed573',
-                              borderColor: m.status === 'active' ? 'rgba(255,107,129,0.3)' : 'rgba(46,213,115,0.3)',
-                              background: 'transparent'
+                              fontWeight: '700',
+                              padding: '2px 7px',
+                              borderRadius: '6px',
+                              background: isFull ? 'rgba(16,185,129,0.12)' : 'rgba(245,158,11,0.15)',
+                              color: isFull ? '#34d399' : '#f59e0b',
+                              border: isFull ? '1px solid rgba(16,185,129,0.3)' : '1px solid rgba(245,158,11,0.3)',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
                             }}
-                            onClick={() => toggleStatus('manager', m.id, m.status)}
+                            title="Click to customize accessible sections"
                           >
-                            {m.status === 'active' ? 'Deact.' : 'Activate'}
+                            <ShieldCheck size={12} />
+                            {activeCount} / {MANAGER_SECTIONS.length}
                           </button>
-                          <ActionBtn icon={<Edit2 size={12} />} color="var(--primary)" title="Edit" onClick={() => openEdit({ ...m, ...editFieldMap(m) })} />
-                          <ActionBtn icon={<Trash2 size={12} />} color="var(--rose)" title="Delete" onClick={() => confirmDelete(m.id, m.name)} />
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{m.phone || '—'}</td>
+                        <td className="num-mono" style={{ textAlign: 'center' }}>{m.purchase_count}</td>
+                        <td className="num-mono" style={{ textAlign: 'center' }}>{m.production_count}</td>
+                        <td className="num-mono" style={{ textAlign: 'center' }}>{m.sales_count}</td>
+                        <td className="num-mono" style={{ textAlign: 'right', color: 'var(--cyan)' }}>{m.total_production_kg?.toLocaleString()}</td>
+                        <td><span className={`pill ${m.status === 'active' ? 'pill-emerald' : 'pill-rose'}`}>{m.status}</span></td>
+                        <td style={{ fontSize: '11px', color: 'var(--text-dim)' }}>{new Date(m.created_at).toLocaleDateString('en-IN')}</td>
+                        <td>
+                          <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                            <button
+                              className="btn btn-outline btn-sm"
+                              style={{ padding: '3px 8px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px', color: '#c084fc', borderColor: 'rgba(168,85,247,0.3)' }}
+                              title="Configure Accessible Sections"
+                              onClick={() => openPermissionsModal(m, 'floor')}
+                            >
+                              <ShieldCheck size={11} /> Sections
+                            </button>
+                            <button
+                              className="btn btn-sm"
+                              style={{
+                                padding: '3px 8px',
+                                fontSize: '11px',
+                                fontWeight: '600',
+                                color: m.status === 'active' ? '#ff6b81' : '#2ed573',
+                                borderColor: m.status === 'active' ? 'rgba(255,107,129,0.3)' : 'rgba(46,213,115,0.3)',
+                                background: 'transparent'
+                              }}
+                              onClick={() => toggleStatus('manager', m.id, m.status)}
+                            >
+                              {m.status === 'active' ? 'Deact.' : 'Activate'}
+                            </button>
+                            <ActionBtn icon={<Edit2 size={12} />} color="var(--primary)" title="Edit" onClick={() => openEdit({ ...m, ...editFieldMap(m) })} />
+                            <ActionBtn icon={<Trash2 size={12} />} color="var(--rose)" title="Delete" onClick={() => confirmDelete(m.id, m.name)} />
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1465,6 +1677,65 @@ export default function MastersPage() {
                     placeholder="+91 98200 12345"
                   />
                 </div>
+                <div style={{ marginBottom: '14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                    <label className="form-label" style={{ margin: 0, fontWeight: '700' }}>
+                      Accessible Sections ({newUserData.permissions?.length || 0}/{MANAGER_SECTIONS.length})
+                    </label>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button
+                        type="button"
+                        onClick={() => setNewUserData({ ...newUserData, permissions: MANAGER_SECTIONS.map(s => s.key) })}
+                        style={{ background: 'none', border: 'none', color: 'var(--primary)', fontSize: '11px', cursor: 'pointer', fontWeight: '600', padding: 0 }}
+                      >
+                        All
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setNewUserData({ ...newUserData, permissions: [] })}
+                        style={{ background: 'none', border: 'none', color: 'var(--rose)', fontSize: '11px', cursor: 'pointer', fontWeight: '600', padding: 0 }}
+                      >
+                        None
+                      </button>
+                    </div>
+                  </div>
+                  <div style={{
+                    display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px',
+                    maxHeight: '160px', overflowY: 'auto', padding: '8px',
+                    background: 'rgba(0,0,0,0.2)', border: '1px solid var(--border-color)', borderRadius: '8px'
+                  }}>
+                    {MANAGER_SECTIONS.map(sec => {
+                      const active = (newUserData.permissions || []).includes(sec.key);
+                      return (
+                        <div
+                          key={sec.key}
+                          onClick={() => {
+                            const cur = newUserData.permissions || [];
+                            const next = cur.includes(sec.key) ? cur.filter(k => k !== sec.key) : [...cur, sec.key];
+                            setNewUserData({ ...newUserData, permissions: next });
+                          }}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: '6px',
+                            padding: '6px 8px', borderRadius: '6px', cursor: 'pointer',
+                            fontSize: '11px', fontWeight: '600',
+                            background: active ? 'rgba(168,85,247,0.12)' : 'rgba(255,255,255,0.03)',
+                            border: active ? '1px solid rgba(168,85,247,0.3)' : '1px solid rgba(255,255,255,0.05)',
+                            color: active ? '#c084fc' : 'var(--text-dim)'
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={active}
+                            onChange={() => {}}
+                            style={{ cursor: 'pointer' }}
+                          />
+                          <span>{sec.label}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
                 <div style={{ padding: '10px', background: 'rgba(56,189,248,0.08)', borderRadius: '6px', border: '1px solid rgba(56,189,248,0.2)', fontSize: '11.5px', color: 'var(--text-muted)' }}>
                   ℹ️ This account will log into the Web ERP with <strong>Manager role (Entry-Only mode)</strong>. Modifying or deleting records is strictly forbidden by server.
                 </div>
@@ -1533,6 +1804,158 @@ export default function MastersPage() {
           onConfirm={executeDeleteUser}
           loading={userLoading}
         />
+      )}
+
+      {/* Configure Manager Permissions Modal */}
+      {permissionsTarget && (
+        <div className="modal-overlay" style={{ zIndex: 10000 }}>
+          <div className="modal-content" style={{ maxWidth: '640px' }}>
+            <div className="modal-header" style={{
+              background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.2), rgba(99, 102, 241, 0.2))'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{
+                  width: '38px', height: '38px', borderRadius: '10px',
+                  background: '#9333ea',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff'
+                }}>
+                  <ShieldCheck size={20} />
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '800' }}>
+                    Assign Sections: {permissionsTarget.display_name || permissionsTarget.name || permissionsTarget.username}
+                  </h3>
+                  <p style={{ margin: 0, fontSize: '11px', color: 'var(--text-muted)' }}>
+                    Enable or deactivate sections for this manager. Only checked sections will appear in their panel.
+                  </p>
+                </div>
+              </div>
+              <button className="modal-close-btn" onClick={() => setPermissionsTarget(null)}>&times;</button>
+            </div>
+
+            <div className="modal-body">
+              {permissionsError && (
+                <div style={{ padding: '10px 12px', background: 'var(--rose-bg)', color: 'var(--rose)', border: '1px solid var(--rose)', borderRadius: '8px', marginBottom: '14px', fontSize: '12.5px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <AlertTriangle size={16} />
+                  <span>{permissionsError}</span>
+                </div>
+              )}
+
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                marginBottom: '14px', padding: '10px 14px',
+                background: 'rgba(255,255,255,0.04)', borderRadius: '8px', border: '1px solid var(--border-color)'
+              }}>
+                <div style={{ fontSize: '12.5px', fontWeight: '600', color: '#e2e8f0' }}>
+                  Active Sections: <span style={{ color: '#c084fc', fontWeight: '800' }}>{selectedPermissions.length}</span> of {MANAGER_SECTIONS.length}
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedPermissions(MANAGER_SECTIONS.map(s => s.key))}
+                    className="btn btn-outline btn-sm"
+                    style={{ fontSize: '11px', padding: '4px 10px' }}
+                  >
+                    Select All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedPermissions([])}
+                    className="btn btn-outline btn-sm"
+                    style={{ fontSize: '11px', padding: '4px 10px', color: 'var(--rose)', borderColor: 'rgba(244,63,94,0.3)' }}
+                  >
+                    Clear All
+                  </button>
+                </div>
+              </div>
+
+              <div style={{
+                display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '10px',
+                maxHeight: '400px', overflowY: 'auto', paddingRight: '4px'
+              }}>
+                {MANAGER_SECTIONS.map(sec => {
+                  const Icon = sec.icon;
+                  const isChecked = selectedPermissions.includes(sec.key);
+                  return (
+                    <div
+                      key={sec.key}
+                      onClick={() => {
+                        setSelectedPermissions(prev =>
+                          prev.includes(sec.key) ? prev.filter(k => k !== sec.key) : [...prev, sec.key]
+                        );
+                      }}
+                      style={{
+                        display: 'flex', alignItems: 'flex-start', gap: '12px',
+                        padding: '12px 14px', borderRadius: '10px', cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                        background: isChecked ? 'rgba(168,85,247,0.12)' : 'rgba(255,255,255,0.02)',
+                        border: isChecked ? '1px solid rgba(168,85,247,0.4)' : '1px solid rgba(255,255,255,0.06)',
+                        boxShadow: isChecked ? '0 4px 14px rgba(168,85,247,0.12)' : 'none'
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => {}}
+                        style={{ marginTop: '3px', cursor: 'pointer', accentColor: '#9333ea', transform: 'scale(1.15)' }}
+                      />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <Icon size={14} color={isChecked ? '#c084fc' : '#64748b'} />
+                          <span style={{ fontSize: '13px', fontWeight: '700', color: isChecked ? '#f8fafc' : '#94a3b8' }}>
+                            {sec.label}
+                          </span>
+                          <span style={{
+                            marginLeft: 'auto', fontSize: '10px', fontWeight: '700', padding: '1px 6px', borderRadius: '4px',
+                            background: isChecked ? 'rgba(16,185,129,0.15)' : 'rgba(255,255,255,0.05)',
+                            color: isChecked ? '#34d399' : '#64748b'
+                          }}>
+                            {isChecked ? 'ACTIVE' : 'OFF'}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: '11px', color: '#64748b', marginTop: '3px', lineHeight: 1.4 }}>
+                          {sec.desc}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div style={{
+                marginTop: '14px', padding: '10px 12px', borderRadius: '8px',
+                background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)',
+                fontSize: '11.5px', color: '#cbd5e1', lineHeight: 1.4
+              }}>
+                ⚠️ <strong>Note:</strong> When a section is deactivated, it disappears from this manager's left sidebar, all quick-action buttons on their dashboard are removed, and server-side direct entry to that module is strictly blocked.
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => setPermissionsTarget(null)}
+                disabled={permissionsLoading}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSavePermissions}
+                disabled={permissionsLoading}
+                className="btn"
+                style={{
+                  background: 'linear-gradient(135deg, #9333ea, #6366f1)',
+                  color: '#fff', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '6px'
+                }}
+              >
+                {permissionsLoading ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+                {permissionsLoading ? 'Saving...' : 'Save Permissions'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
