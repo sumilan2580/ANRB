@@ -243,6 +243,7 @@ CREATE TABLE IF NOT EXISTS raw_material_purchases (
     discount_amount   NUMERIC(18,2) DEFAULT 0,
     other_charges     NUMERIC(18,2) DEFAULT 0,
     round_off         NUMERIC(18,2) DEFAULT 0,
+    el_charges        TEXT         DEFAULT '[]',
     payment_mode      VARCHAR(30)  DEFAULT 'Credit',
     invoice_number    VARCHAR(100),
     remarks           VARCHAR(500),

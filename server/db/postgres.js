@@ -279,6 +279,8 @@ async function initPool() {
 
         ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions TEXT;
         ALTER TABLE managers ADD COLUMN IF NOT EXISTS permissions TEXT;
+
+        ALTER TABLE raw_material_purchases ADD COLUMN IF NOT EXISTS el_charges TEXT DEFAULT '[]';
       `);
     } finally {
       client.release();
