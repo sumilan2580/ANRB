@@ -276,6 +276,9 @@ async function initPool() {
         ON CONFLICT (code) DO NOTHING;
 
         ALTER TABLE payments ADD COLUMN IF NOT EXISTS bank_account_id INTEGER REFERENCES bank_accounts(id);
+
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions TEXT;
+        ALTER TABLE managers ADD COLUMN IF NOT EXISTS permissions TEXT;
       `);
     } finally {
       client.release();
