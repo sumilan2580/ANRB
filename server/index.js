@@ -569,7 +569,7 @@ app.get('/api/dashboard/stats', requireAdmin, async (req, res) => {
     const todayPur = await db.prepare(`
       SELECT COALESCE(SUM(quantity_kg), 0) as total_kg, COALESCE(SUM(total_amount), 0) as total_amount, COUNT(*) as count
       FROM raw_material_purchases
-      WHERE date = ?
+      WHERE date = ? AND (is_voided = 0 OR is_voided IS NULL)
     `).get(today);
 
     // 4. Today's Production & Wastage
@@ -579,14 +579,14 @@ app.get('/api/dashboard/stats', requireAdmin, async (req, res) => {
              COALESCE(SUM(total_wastage_kg), 0) as total_wastage_kg,
              COUNT(*) as count
       FROM production_batches
-      WHERE date = ?
+      WHERE date = ? AND (is_voided = 0 OR is_voided IS NULL)
     `).get(today);
 
     // 5. Today's Sales
     const todaySale = await db.prepare(`
       SELECT COALESCE(SUM(quantity_kg), 0) as total_kg, COALESCE(SUM(total_amount), 0) as total_amount, COUNT(*) as count
       FROM sales
-      WHERE date = ?
+      WHERE date = ? AND (is_voided = 0 OR is_voided IS NULL)
     `).get(today);
 
     // 6. Monthly Production
@@ -595,14 +595,14 @@ app.get('/api/dashboard/stats', requireAdmin, async (req, res) => {
              COALESCE(SUM(raw_material_used_kg), 0) as total_rm_used_kg,
              COALESCE(SUM(total_wastage_kg), 0) as total_wastage_kg
       FROM production_batches
-      WHERE date >= ?
+      WHERE date >= ? AND (is_voided = 0 OR is_voided IS NULL)
     `).get(firstDayOfMonth);
 
     // 7. Monthly Sales
     const monthlySale = await db.prepare(`
       SELECT COALESCE(SUM(quantity_kg), 0) as total_kg, COALESCE(SUM(total_amount), 0) as total_amount
       FROM sales
-      WHERE date >= ?
+      WHERE date >= ? AND (is_voided = 0 OR is_voided IS NULL)
     `).get(firstDayOfMonth);
 
     // 8. Trends (Last 7 Days)
@@ -617,7 +617,7 @@ app.get('/api/dashboard/stats', requireAdmin, async (req, res) => {
     const rawRm = (await db.prepare(`
       SELECT date, COALESCE(SUM(quantity_kg), 0) as kg, COALESCE(SUM(total_amount), 0) as amount
       FROM raw_material_purchases
-      WHERE date >= ?
+      WHERE date >= ? AND (is_voided = 0 OR is_voided IS NULL)
       GROUP BY date
     `).all(minDate)) || [];
     const rmMap = new Map(rawRm.map(r => [r.date, r]));
@@ -633,7 +633,7 @@ app.get('/api/dashboard/stats', requireAdmin, async (req, res) => {
              COALESCE(SUM(total_finished_kg), 0) as finished_kg,
              COALESCE(SUM(total_wastage_kg), 0) as wastage_kg
       FROM production_batches
-      WHERE date >= ?
+      WHERE date >= ? AND (is_voided = 0 OR is_voided IS NULL)
       GROUP BY date
     `).all(minDate)) || [];
     const prodMap = new Map(rawProd.map(r => [r.date, r]));
@@ -651,7 +651,7 @@ app.get('/api/dashboard/stats', requireAdmin, async (req, res) => {
     const rawSales = (await db.prepare(`
       SELECT date, COALESCE(SUM(quantity_kg), 0) as kg, COALESCE(SUM(total_amount), 0) as amount
       FROM sales
-      WHERE date >= ?
+      WHERE date >= ? AND (is_voided = 0 OR is_voided IS NULL)
       GROUP BY date
     `).all(minDate)) || [];
     const salesMap = new Map(rawSales.map(r => [r.date, r]));
@@ -665,6 +665,7 @@ app.get('/api/dashboard/stats', requireAdmin, async (req, res) => {
     const wastageReasons = await db.prepare(`
       SELECT COALESCE(wastage_reason, 'Other') as reason, SUM(total_wastage_kg) as total_kg
       FROM production_batches
+      WHERE (is_voided = 0 OR is_voided IS NULL)
       GROUP BY wastage_reason
     `).all();
 
