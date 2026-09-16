@@ -503,13 +503,13 @@ export default function TransactionsPage({ defaultTab = 'orders' }) {
         setConsumptionBatches(data || []);
       } else if (tab === 'purchases') {
         const data = await api.getPurchases(queryStr);
-        setPurchases(data || []);
+        setPurchases((data || []).filter(p => !p.is_voided));
       } else if (tab === 'production') {
         const data = await api.getProductions(queryStr);
-        setProductions(data || []);
+        setProductions((data || []).filter(p => !p.is_voided));
       } else if (tab === 'sales') {
         const data = await api.getSales(queryStr);
-        setSales(data || []);
+        setSales((data || []).filter(s => !s.is_voided));
       }
     } catch (err) {
       console.error(err);
@@ -582,9 +582,9 @@ export default function TransactionsPage({ defaultTab = 'orders' }) {
   const TABS = [
     { id: 'orders', label: '1. Production Orders', icon: <FileText size={14} />, count: orders.length },
     { id: 'consumption', label: '2. Material Issue Batches', icon: <Layers size={14} />, count: consumptionBatches.length },
-    { id: 'purchases', label: '3. RM Purchases', icon: <ShoppingBag size={14} />, count: purchases.length },
-    { id: 'production', label: '4. Manufacturing & Wastage', icon: <Factory size={14} />, count: productions.length },
-    { id: 'sales', label: '5. Sales & Invoices', icon: <Truck size={14} />, count: sales.length },
+    { id: 'purchases', label: '3. RM Purchases', icon: <ShoppingBag size={14} />, count: purchases.filter(p => !p.is_voided).length },
+    { id: 'production', label: '4. Manufacturing & Wastage', icon: <Factory size={14} />, count: productions.filter(p => !p.is_voided).length },
+    { id: 'sales', label: '5. Sales & Invoices', icon: <Truck size={14} />, count: sales.filter(s => !s.is_voided).length },
   ];
 
   return (
@@ -882,7 +882,7 @@ export default function TransactionsPage({ defaultTab = 'orders' }) {
                 </tr>
               </thead>
               <tbody>
-                {purchases.map(p => {
+                {purchases.filter(p => !p.is_voided).map(p => {
                   const isExpanded = expandedPurchase === p.id;
                   const itemCount = p.items && p.items.length > 0 ? p.items.length : 1;
                   return (
@@ -1003,7 +1003,7 @@ export default function TransactionsPage({ defaultTab = 'orders' }) {
                 </tr>
               </thead>
               <tbody>
-                {productions.map(batch => {
+                {productions.filter(p => !p.is_voided).map(batch => {
                   const isExpanded = expandedBatch === batch.id;
                   const totalFG = batch.total_finished_kg != null ? Number(batch.total_finished_kg).toLocaleString() : '—';
                   const fgUnit = batch.outputs?.[0]?.unit || 'KG';
@@ -1167,7 +1167,7 @@ export default function TransactionsPage({ defaultTab = 'orders' }) {
                 </tr>
               </thead>
               <tbody>
-                {sales.map(s => (
+                {sales.filter(s => !s.is_voided).map(s => (
                   <tr key={s.id}>
                     <td><span className="pill pill-emerald num-mono">{s.sale_code}</span></td>
                     <td>{s.date}</td>

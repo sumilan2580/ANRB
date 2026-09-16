@@ -489,7 +489,7 @@ CREATE TABLE IF NOT EXISTS payments (
     id             SERIAL PRIMARY KEY,
     payment_code   VARCHAR(50)  NOT NULL UNIQUE,
     date           VARCHAR(20)  NOT NULL,
-    party_type     VARCHAR(20)  NOT NULL CHECK (party_type IN ('CUSTOMER', 'SUPPLIER')),
+    party_type     VARCHAR(20)  NOT NULL CHECK (party_type IN ('CUSTOMER', 'SUPPLIER', 'EXPENSE', 'INCOME')),
     party_id       INTEGER      NOT NULL,
     amount         NUMERIC(18,2) NOT NULL CHECK (amount > 0),
     payment_mode   VARCHAR(30)  DEFAULT 'Bank',

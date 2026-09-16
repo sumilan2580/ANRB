@@ -281,6 +281,9 @@ async function initPool() {
         ALTER TABLE managers ADD COLUMN IF NOT EXISTS permissions TEXT;
 
         ALTER TABLE raw_material_purchases ADD COLUMN IF NOT EXISTS el_charges TEXT DEFAULT '[]';
+
+        ALTER TABLE payments DROP CONSTRAINT IF EXISTS payments_party_type_check;
+        ALTER TABLE payments ADD CONSTRAINT payments_party_type_check CHECK (party_type IN ('CUSTOMER', 'SUPPLIER', 'EXPENSE', 'INCOME'));
       `);
     } finally {
       client.release();

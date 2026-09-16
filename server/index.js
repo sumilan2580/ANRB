@@ -2423,15 +2423,18 @@ app.delete('/api/transactions/consumption-batches/:id', requireAdmin, async (req
 // GET: Managers can read purchases (to view their own entries)
 app.get('/api/transactions/purchases', async (req, res) => {
   try {
-    const { dateFrom, dateTo, supplierId, rawMaterialId, managerName } = req.query;
+    const { dateFrom, dateTo, supplierId, rawMaterialId, managerName, includeVoided } = req.query;
     let query = `
       SELECT p.*, s.name AS supplier_name, s.gst_number AS supplier_gstin, s.state AS supplier_state,
              rm.name AS raw_material_name, rm.code AS raw_material_code, rm.hsn_code AS raw_material_hsn
       FROM raw_material_purchases p
       JOIN suppliers s ON p.supplier_id = s.id
       LEFT JOIN raw_materials rm ON p.raw_material_id = rm.id
-      WHERE 1=1
+      WHERE (p.is_voided = 0 OR p.is_voided IS NULL)
     `;
+    if (includeVoided === 'true') {
+      query = query.replace('WHERE (p.is_voided = 0 OR p.is_voided IS NULL)', 'WHERE 1=1');
+    }
     const params = [];
     if (dateFrom) { query += ' AND p.date >= ?'; params.push(dateFrom); }
     if (dateTo) { query += ' AND p.date <= ?'; params.push(dateTo); }
@@ -2930,7 +2933,7 @@ app.delete('/api/transactions/purchases/:id', requireAdmin, async (req, res) => 
   try {
     const pur = await db.prepare('SELECT * FROM raw_material_purchases WHERE id = ?').get(req.params.id);
     if (!pur) return res.status(404).json({ error: 'Purchase record not found' });
-    if (pur.is_voided) return res.status(400).json({ error: 'Purchase is already voided.' });
+    if (pur.is_voided) return res.json({ success: true, message: 'Purchase is already voided.' });
 
     const items = await db.prepare('SELECT * FROM purchase_items WHERE purchase_id = ?').all(pur.id);
     const itemsToReverse = items.length > 0 ? items : [{ raw_material_id: pur.raw_material_id, quantity: pur.quantity_kg, unit: 'KG' }];
@@ -2985,7 +2988,7 @@ app.delete('/api/transactions/purchases/:id', requireAdmin, async (req, res) => 
 // =============================================================
 app.get('/api/transactions/production', async (req, res) => {
   try {
-    const { dateFrom, dateTo, machineId, shiftId, rawMaterialId, managerName } = req.query;
+    const { dateFrom, dateTo, machineId, shiftId, rawMaterialId, managerName, includeVoided } = req.query;
     let query = `
       SELECT pb.*, m.name AS machine_name, m.machine_code, s.name AS shift_name,
              rm.name AS raw_material_name, rm.code AS raw_material_code,
@@ -2996,8 +2999,11 @@ app.get('/api/transactions/production', async (req, res) => {
       LEFT JOIN raw_materials rm ON pb.raw_material_id = rm.id
       LEFT JOIN production_orders po ON pb.production_order_id = po.id
       LEFT JOIN consumption_batches cb ON pb.consumption_batch_id = cb.id
-      WHERE 1=1
+      WHERE (pb.is_voided = 0 OR pb.is_voided IS NULL)
     `;
+    if (includeVoided === 'true') {
+      query = query.replace('WHERE (pb.is_voided = 0 OR pb.is_voided IS NULL)', 'WHERE 1=1');
+    }
     const params = [];
     if (dateFrom) { query += ' AND pb.date >= ?'; params.push(dateFrom); }
     if (dateTo) { query += ' AND pb.date <= ?'; params.push(dateTo); }
@@ -3285,7 +3291,7 @@ app.delete('/api/transactions/production/:id', requireAdmin, async (req, res) =>
   try {
     const batch = await db.prepare('SELECT * FROM production_batches WHERE id = ?').get(req.params.id);
     if (!batch) return res.status(404).json({ error: 'Production batch not found' });
-    if (batch.is_voided) return res.status(400).json({ error: 'Batch is already voided.' });
+    if (batch.is_voided) return res.json({ success: true, message: 'Batch is already voided.' });
 
     const outputs = await db.prepare('SELECT * FROM production_outputs WHERE batch_id = ?').all(batch.id);
 
@@ -3349,7 +3355,7 @@ app.delete('/api/transactions/production/:id', requireAdmin, async (req, res) =>
 // GET: Managers can read sales (to view their own entries and print invoices)
 app.get('/api/transactions/sales', async (req, res) => {
   try {
-    const { dateFrom, dateTo, customerId, finishedProductId, managerName, paymentType } = req.query;
+    const { dateFrom, dateTo, customerId, finishedProductId, managerName, paymentType, includeVoided } = req.query;
     let query = `
       SELECT s.*, c.name AS customer_name, c.phone AS customer_phone, c.gst_number AS customer_gstin,
              c.address AS customer_address, c.state AS customer_state,
@@ -3358,8 +3364,11 @@ app.get('/api/transactions/sales', async (req, res) => {
       FROM sales s
       JOIN customers c ON s.customer_id = c.id
       LEFT JOIN finished_products fp ON s.finished_product_id = fp.id
-      WHERE 1=1
+      WHERE (s.is_voided = 0 OR s.is_voided IS NULL)
     `;
+    if (includeVoided === 'true') {
+      query = query.replace('WHERE (s.is_voided = 0 OR s.is_voided IS NULL)', 'WHERE 1=1');
+    }
     const params = [];
     if (dateFrom) { query += ' AND s.date >= ?'; params.push(dateFrom); }
     if (dateTo) { query += ' AND s.date <= ?'; params.push(dateTo); }
@@ -3871,7 +3880,7 @@ app.delete('/api/transactions/sales/:id', requireAdmin, async (req, res) => {
   try {
     const sale = await db.prepare('SELECT * FROM sales WHERE id = ?').get(req.params.id);
     if (!sale) return res.status(404).json({ error: 'Sale record not found' });
-    if (sale.is_voided) return res.status(400).json({ error: 'Sale is already voided.' });
+    if (sale.is_voided) return res.json({ success: true, message: 'Sale is already voided.' });
 
     const items = await db.prepare('SELECT * FROM sales_items WHERE sale_id = ?').all(sale.id);
     const itemsToRestore = items.length > 0 ? items : [{ finished_product_id: sale.finished_product_id, quantity: sale.quantity_kg, unit: 'KG' }];
