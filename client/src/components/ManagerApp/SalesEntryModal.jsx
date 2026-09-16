@@ -165,6 +165,7 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
   const [ratePerKg, setRatePerKg] = useState('');
   const [gstPercent, setGstPercent] = useState('18');
   const [invoiceNumber, setInvoiceNumber] = useState('');
+  const [roundOff, setRoundOff] = useState('');
   const [paymentType, setPaymentType] = useState('Credit');
   const [remarks, setRemarks] = useState('');
 
@@ -189,6 +190,7 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
         setRatePerKg(String(initialSale.rate_per_kg || initialSale.items?.[0]?.rate || ''));
         setGstPercent(String(initialSale.gst_percent || initialSale.items?.[0]?.gst_percent || '18'));
         setInvoiceNumber(initialSale.invoice_number || '');
+        setRoundOff(initialSale.round_off !== undefined && initialSale.round_off !== null && Number(initialSale.round_off) !== 0 ? String(initialSale.round_off) : '');
         setPaymentType(initialSale.payment_type || 'Cash');
         setRemarks(initialSale.remarks || '');
       } else {
@@ -205,6 +207,7 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
         setQuantityKg('');
         setRatePerKg('');
         setInvoiceNumber('');
+        setRoundOff('');
         setPaymentType('Credit');
         setRemarks('');
       }
@@ -282,7 +285,16 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
   const numGst = parseFloat(gstPercent) || 0;
   const taxableAmount = numQty * numRate;
   const gstAmount = (taxableAmount * numGst) / 100;
-  const totalAmount = taxableAmount + gstAmount;
+  const subTotal = taxableAmount + gstAmount;
+  const billRound = parseFloat(roundOff) || 0;
+  const totalAmount = Math.max(0, subTotal + billRound);
+
+  const handleAutoRoundOff = () => {
+    if (subTotal <= 0) return;
+    const rounded = Math.round(subTotal);
+    const diff = Number((rounded - subTotal).toFixed(2));
+    setRoundOff(diff === 0 ? '0.00' : (diff > 0 ? `+${diff.toFixed(2)}` : diff.toFixed(2)));
+  };
 
   // Stock status flags
   const isNoStock = selectedFG && availableStock <= 0;
@@ -324,6 +336,7 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
         quantityKg: numQty,
         ratePerKg: numRate,
         gstPercent: numGst,
+        roundOff: billRound,
         invoiceNumber: invoiceNumber.trim(),
         stateCode: stateCode.trim() || '24',
         reverseCharge,
@@ -355,6 +368,7 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
       setQuantityKg('');
       setRatePerKg('');
       setInvoiceNumber('');
+      setRoundOff('');
       setRemarks('');
       if (onSuccess) onSuccess();
       onClose();
@@ -544,6 +558,48 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
                       <span className="num-mono" style={{ color: 'var(--amber)' }}>₹{gstAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
                     </div>
                   )}
+                  {numGst > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', color: 'var(--text-muted)', fontSize: '11.5px' }}>
+                      <span>Subtotal (Taxable + GST)</span>
+                      <span className="num-mono">₹{subTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                  )}
+
+                  {/* Round Off Input & Auto Button */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '8px 0', paddingTop: '8px', borderTop: '1px dashed var(--border-color)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-main)' }}>Round Off (±)</span>
+                      <button
+                        type="button"
+                        onClick={handleAutoRoundOff}
+                        style={{
+                          background: 'rgba(56,189,248,0.15)',
+                          border: '1px solid rgba(56,189,248,0.3)',
+                          color: '#38bdf8',
+                          fontSize: '10.5px',
+                          fontWeight: '700',
+                          padding: '2px 8px',
+                          borderRadius: '4px',
+                          cursor: 'pointer'
+                        }}
+                        title="Auto calculate nearest integer round off"
+                      >
+                        Auto Round
+                      </button>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <input
+                        type="number"
+                        step="any"
+                        className="form-input num-mono"
+                        placeholder="e.g. -0.40"
+                        value={roundOff}
+                        onChange={e => setRoundOff(e.target.value)}
+                        style={{ width: '105px', padding: '4px 8px', fontSize: '12.5px', textAlign: 'right' }}
+                      />
+                    </div>
+                  </div>
+
                   <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--border-color)', paddingTop: '8px' }}>
                     <span style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-main)' }}>Invoice Total</span>
                     <span className="num-mono" style={{ fontSize: '20px', fontWeight: '800', color: 'var(--emerald)' }}>

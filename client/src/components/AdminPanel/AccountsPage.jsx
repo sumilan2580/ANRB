@@ -977,18 +977,18 @@ function ExpenseLedgerView({ onAddPayment }) {
     : expenseHeads;
 
   const handlePrint = () => {
-    if (!ledger || !ledger.head) return;
+    const h = ledger?.head || ledger?.expenseHead;
+    if (!ledger || !h) return;
     const win = window.open('', '_blank');
-    const h = ledger.head;
     const isInc = h.type === 'INCOME';
     const rows = (ledger.transactions || []).map(t => `
       <tr>
         <td>${t.date}</td>
-        <td>${t.doc_no || '—'}</td>
+        <td>${t.doc_no || t.voucher_no || '—'}</td>
         <td>${t.payment_mode || 'Bank'}</td>
         <td>${t.bank_name || (t.payment_mode === 'Cash' ? 'Cash in Hand' : '—')}</td>
         <td>${t.reference_no || '—'}</td>
-        <td>${t.description || '—'}</td>
+        <td>${t.description || t.remarks || '—'}</td>
         <td style="text-align:right;font-weight:700;color:${isInc ? '#2e7d32' : '#c62828'}">₹${Number(t.amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
       </tr>
     `).join('');
@@ -1005,10 +1005,10 @@ function ExpenseLedgerView({ onAddPayment }) {
       <p style="color:#555;">Category: <strong>${h.category || 'General'}</strong> | Type: <strong>${h.type}</strong></p>
       ${(dateFrom || dateTo) ? `<p>Period: ${dateFrom || 'Beginning'} to ${dateTo || 'Today'}</p>` : ''}
       <div class="summary">
-        <div class="sum-box"><div style="font-size:10px;color:#666;text-transform:uppercase">Total ${isInc ? 'Received' : 'Incurred'}</div><div style="font-size:16px;font-weight:700;color:${isInc ? '#2e7d32' : '#c62828'}">₹${(ledger.summary?.totalIncurred || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div></div>
-        <div class="sum-box"><div style="font-size:10px;color:#666;text-transform:uppercase">Cash ${isInc ? 'Inflow' : 'Outflow'}</div><div style="font-size:16px;font-weight:700">₹${(ledger.summary?.totalCash || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div></div>
-        <div class="sum-box"><div style="font-size:10px;color:#666;text-transform:uppercase">Bank ${isInc ? 'Inflow' : 'Outflow'}</div><div style="font-size:16px;font-weight:700">₹${(ledger.summary?.totalBank || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div></div>
-        <div class="sum-box"><div style="font-size:10px;color:#666;text-transform:uppercase">Total Vouchers</div><div style="font-size:16px;font-weight:700">${ledger.summary?.totalCount || 0}</div></div>
+        <div class="sum-box"><div style="font-size:10px;color:#666;text-transform:uppercase">Total ${isInc ? 'Received' : 'Incurred'}</div><div style="font-size:16px;font-weight:700;color:${isInc ? '#2e7d32' : '#c62828'}">₹${(ledger.summary?.totalIncurred ?? ledger.summary?.totalAmount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div></div>
+        <div class="sum-box"><div style="font-size:10px;color:#666;text-transform:uppercase">Cash ${isInc ? 'Inflow' : 'Outflow'}</div><div style="font-size:16px;font-weight:700">₹${(ledger.summary?.totalCash ?? ledger.summary?.cashTotal ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div></div>
+        <div class="sum-box"><div style="font-size:10px;color:#666;text-transform:uppercase">Bank ${isInc ? 'Inflow' : 'Outflow'}</div><div style="font-size:16px;font-weight:700">₹${(ledger.summary?.totalBank ?? ledger.summary?.bankTotal ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div></div>
+        <div class="sum-box"><div style="font-size:10px;color:#666;text-transform:uppercase">Total Vouchers</div><div style="font-size:16px;font-weight:700">${ledger.summary?.totalCount ?? ledger.summary?.count ?? 0}</div></div>
       </div>
       <table>
         <thead><tr><th>Date</th><th>Voucher #</th><th>Mode</th><th>Account</th><th>Ref / Cheque #</th><th>Remarks</th><th style="text-align:right">Amount (₹)</th></tr></thead>
@@ -1020,7 +1020,8 @@ function ExpenseLedgerView({ onAddPayment }) {
     setTimeout(() => { win.print(); win.close(); }, 400);
   };
 
-  const isIncomeHead = ledger?.head?.type === 'INCOME';
+  const headInfo = ledger?.head || ledger?.expenseHead;
+  const isIncomeHead = headInfo?.type === 'INCOME';
 
   return (
     <div>
@@ -1059,7 +1060,7 @@ function ExpenseLedgerView({ onAddPayment }) {
         {ledger && (
           <>
             <button className="btn btn-outline" onClick={handlePrint}><Printer size={14} /> Print</button>
-            <button className="btn btn-outline" onClick={() => exportCSV(ledger.transactions, `${ledger.head?.code || 'expense'}-ledger.csv`)}><Download size={14} /> Export</button>
+            <button className="btn btn-outline" onClick={() => exportCSV(ledger.transactions, `${headInfo?.code || 'expense'}-ledger.csv`)}><Download size={14} /> Export</button>
           </>
         )}
         <button
@@ -1073,20 +1074,20 @@ function ExpenseLedgerView({ onAddPayment }) {
 
       {error && <div style={{ background: 'var(--rose-bg)', border: '1px solid var(--rose)', color: 'var(--rose)', padding: '10px 14px', borderRadius: '8px', marginBottom: '14px', fontSize: '13px' }}>{error}</div>}
 
-      {ledger && ledger.head && (
+      {ledger && headInfo && (
         <>
           {/* Head Info Card */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '14px 20px', marginBottom: '16px' }}>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '800' }}>{ledger.head.name}</h3>
+                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '800' }}>{headInfo.name}</h3>
                 <span className={`pill ${isIncomeHead ? 'pill-emerald' : 'pill-rose'}`} style={{ fontSize: '11px' }}>
-                  {ledger.head.type}
+                  {headInfo.type}
                 </span>
-                <span className="pill pill-blue num-mono" style={{ fontSize: '11px' }}>{ledger.head.code}</span>
+                <span className="pill pill-blue num-mono" style={{ fontSize: '11px' }}>{headInfo.code}</span>
               </div>
               <p style={{ margin: '4px 0 0', color: 'var(--text-muted)', fontSize: '12px' }}>
-                Category: <strong>{ledger.head.category || 'General'}</strong> {ledger.head.description ? `• ${ledger.head.description}` : ''}
+                Category: <strong>{headInfo.category || 'General'}</strong> {headInfo.description ? `• ${headInfo.description}` : ''}
               </p>
             </div>
             {(dateFrom || dateTo) && (
@@ -1103,7 +1104,7 @@ function ExpenseLedgerView({ onAddPayment }) {
                 Total {isIncomeHead ? 'Income (Receipts)' : 'Expense (Payments)'}
               </div>
               <div style={{ fontSize: '20px', fontWeight: '800', color: isIncomeHead ? 'var(--emerald)' : 'var(--rose)', marginTop: '4px' }}>
-                {fmtINR(ledger.summary?.totalIncurred || 0)}
+                {fmtINR(ledger.summary?.totalIncurred ?? ledger.summary?.totalAmount ?? 0)}
               </div>
             </div>
             <div className="stat-card" style={{ padding: '16px' }}>
@@ -1111,7 +1112,7 @@ function ExpenseLedgerView({ onAddPayment }) {
                 Cash {isIncomeHead ? 'Inflow' : 'Outflow'}
               </div>
               <div style={{ fontSize: '20px', fontWeight: '800', color: 'var(--amber)', marginTop: '4px' }}>
-                {fmtINR(ledger.summary?.totalCash || 0)}
+                {fmtINR(ledger.summary?.totalCash ?? ledger.summary?.cashTotal ?? 0)}
               </div>
             </div>
             <div className="stat-card" style={{ padding: '16px' }}>
@@ -1119,7 +1120,7 @@ function ExpenseLedgerView({ onAddPayment }) {
                 Bank {isIncomeHead ? 'Inflow' : 'Outflow'}
               </div>
               <div style={{ fontSize: '20px', fontWeight: '800', color: '#38bdf8', marginTop: '4px' }}>
-                {fmtINR(ledger.summary?.totalBank || 0)}
+                {fmtINR(ledger.summary?.totalBank ?? ledger.summary?.bankTotal ?? 0)}
               </div>
             </div>
             <div className="stat-card" style={{ padding: '16px' }}>
@@ -1127,7 +1128,7 @@ function ExpenseLedgerView({ onAddPayment }) {
                 Total Vouchers
               </div>
               <div style={{ fontSize: '20px', fontWeight: '800', marginTop: '4px' }}>
-                {ledger.summary?.totalCount || 0}
+                {ledger.summary?.totalCount ?? ledger.summary?.count ?? 0}
               </div>
             </div>
           </div>
@@ -1156,7 +1157,7 @@ function ExpenseLedgerView({ onAddPayment }) {
                     <td><span className="pill pill-cyan" style={{ fontSize: '10px' }}>{t.payment_mode || 'Bank'}</span></td>
                     <td style={{ fontSize: '12px' }}>{t.bank_name || (t.payment_mode === 'Cash' ? 'Cash in Hand' : '—')}</td>
                     <td style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{t.reference_no || '—'}</td>
-                    <td style={{ fontSize: '12px' }}>{t.description || '—'}</td>
+                    <td style={{ fontSize: '12px' }}>{t.description || t.remarks || '—'}</td>
                     <td className="num-mono" style={{ textAlign: 'right', fontWeight: '700', color: isIncomeHead ? 'var(--emerald)' : 'var(--rose)' }}>
                       {fmtINR(t.amount)}
                     </td>

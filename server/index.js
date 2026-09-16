@@ -6550,6 +6550,7 @@ app.get('/api/accounts/expense-ledger', async (req, res) => {
         bank_name: r.bank_name || (r.payment_mode === 'Cash' ? 'Cash in Hand' : '—'),
         reference_no: r.reference_no || '',
         remarks: r.remarks || '',
+        description: r.remarks || '',
         amount: amt,
         running_total: Number(runningTotal.toFixed(2)),
         created_by: r.manager_name || r.created_by || 'Admin',
@@ -6557,14 +6558,30 @@ app.get('/api/accounts/expense-ledger', async (req, res) => {
       };
     });
 
+    if (!headInfo && transactions.length > 0) {
+      const first = rawRows[0];
+      headInfo = {
+        id: first.party_id,
+        code: first.head_code,
+        name: first.head_name,
+        type: first.head_type,
+        category: first.head_category
+      };
+    }
+
     res.json({
+      head: headInfo,
       expenseHead: headInfo,
       transactions,
       summary: {
         count: transactions.length,
+        totalCount: transactions.length,
         totalAmount: Number(totalAmount.toFixed(2)),
+        totalIncurred: Number(totalAmount.toFixed(2)),
         cashTotal: Number(cashTotal.toFixed(2)),
-        bankTotal: Number(bankTotal.toFixed(2))
+        totalCash: Number(cashTotal.toFixed(2)),
+        bankTotal: Number(bankTotal.toFixed(2)),
+        totalBank: Number(bankTotal.toFixed(2))
       }
     });
   } catch (err) {

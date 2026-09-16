@@ -83,10 +83,14 @@ export default function TaxInvoiceModal({ isOpen, saleId, onClose }) {
       msg += `${idx + 1}. ${item.productName} - ${item.quantity} ${item.unit || 'KG'} @ ₹${item.ratePerKg} = ₹${Number(item.taxableAmount || 0).toLocaleString('en-IN')}\n`;
     });
     msg += `---------------------------\n`;
-    msg += `*Taxable Value:* ₹${Number(inv?.subtotal || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}\n`;
-    const gstTotal = Number(inv?.cgst || 0) + Number(inv?.sgst || 0) + Number(inv?.igst || 0);
+    msg += `*Taxable Value:* ₹${Number(inv?.subtotal || inv?.taxableAmount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}\n`;
+    const gstTotal = Number(inv?.cgst || inv?.cgstAmount || 0) + Number(inv?.sgst || inv?.sgstAmount || 0) + Number(inv?.igst || inv?.igstAmount || 0);
     msg += `*Total GST:* ₹${gstTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}\n`;
-    msg += `*Grand Total:* ₹${Number(inv?.grandTotal || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}\n`;
+    if (Number(inv?.roundOff || inv?.round_off || 0) !== 0) {
+      const ro = Number(inv?.roundOff || inv?.round_off || 0);
+      msg += `*Round Off:* ${ro > 0 ? '+' : ''}₹${ro.toFixed(2)}\n`;
+    }
+    msg += `*Grand Total:* ₹${Number(inv?.grandTotal || inv?.totalAmount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}\n`;
     if (comp?.bankName) {
       msg += `\n*Bank Details:*\nBank: ${comp.bankName}\nA/C: ${comp.accountNumber}\nIFSC: ${comp.ifscCode}\n`;
     }
@@ -402,6 +406,14 @@ export default function TaxInvoiceModal({ isOpen, saleId, onClose }) {
                     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', color: '#059669' }}>
                       <span>Discount:</span>
                       <strong style={{ fontFamily: 'monospace' }}>-₹{Number(inv?.discountAmount).toFixed(2)}</strong>
+                    </div>
+                  )}
+                  {Number(inv?.roundOff || inv?.round_off || 0) !== 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', color: '#64748b' }}>
+                      <span>Round Off:</span>
+                      <strong style={{ fontFamily: 'monospace' }}>
+                        {Number(inv?.roundOff || inv?.round_off || 0) > 0 ? '+' : ''}₹{Number(inv?.roundOff || inv?.round_off || 0).toFixed(2)}
+                      </strong>
                     </div>
                   )}
                   <div style={{
