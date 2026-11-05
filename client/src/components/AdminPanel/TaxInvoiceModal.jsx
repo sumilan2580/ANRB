@@ -84,8 +84,16 @@ export default function TaxInvoiceModal({ isOpen, saleId, onClose }) {
     });
     msg += `---------------------------\n`;
     msg += `*Taxable Value:* ₹${Number(inv?.subtotal || inv?.taxableAmount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}\n`;
-    const gstTotal = Number(inv?.cgst || inv?.cgstAmount || 0) + Number(inv?.sgst || inv?.sgstAmount || 0) + Number(inv?.igst || inv?.igstAmount || 0);
-    msg += `*Total GST:* ₹${gstTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}\n`;
+    if (Number(inv?.igst || inv?.igstAmount || 0) > 0) {
+      msg += `*Output IGST:* ₹${Number(inv?.igst || inv?.igstAmount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}\n`;
+    } else {
+      if (Number(inv?.cgst || inv?.cgstAmount || 0) > 0) {
+        msg += `*Output CGST:* ₹${Number(inv?.cgst || inv?.cgstAmount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}\n`;
+      }
+      if (Number(inv?.sgst || inv?.sgstAmount || 0) > 0) {
+        msg += `*Output SGST:* ₹${Number(inv?.sgst || inv?.sgstAmount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}\n`;
+      }
+    }
     if (Number(inv?.roundOff || inv?.round_off || 0) !== 0) {
       const ro = Number(inv?.roundOff || inv?.round_off || 0);
       msg += `*Round Off:* ${ro > 0 ? '+' : ''}₹${ro.toFixed(2)}\n`;
@@ -388,19 +396,22 @@ export default function TaxInvoiceModal({ isOpen, saleId, onClose }) {
                     <span style={{ color: '#64748b' }}>Taxable Amount:</span>
                     <strong style={{ fontFamily: 'monospace' }}>₹{Number(inv?.taxableAmount || 0).toFixed(2)}</strong>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0' }}>
-                    <span style={{ color: '#64748b' }}>CGST:</span>
-                    <strong style={{ fontFamily: 'monospace' }}>₹{Number(inv?.cgstAmount || 0).toFixed(2)}</strong>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0' }}>
-                    <span style={{ color: '#64748b' }}>SGST:</span>
-                    <strong style={{ fontFamily: 'monospace' }}>₹{Number(inv?.sgstAmount || 0).toFixed(2)}</strong>
-                  </div>
-                  {Number(inv?.igstAmount || 0) > 0 && (
+                  {Number(inv?.igstAmount || 0) > 0 ? (
                     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0' }}>
-                      <span style={{ color: '#64748b' }}>IGST:</span>
+                      <span style={{ color: '#64748b' }}>Output IGST:</span>
                       <strong style={{ fontFamily: 'monospace' }}>₹{Number(inv?.igstAmount).toFixed(2)}</strong>
                     </div>
+                  ) : (
+                    <>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0' }}>
+                        <span style={{ color: '#64748b' }}>Output CGST:</span>
+                        <strong style={{ fontFamily: 'monospace' }}>₹{Number(inv?.cgstAmount || 0).toFixed(2)}</strong>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0' }}>
+                        <span style={{ color: '#64748b' }}>Output SGST:</span>
+                        <strong style={{ fontFamily: 'monospace' }}>₹{Number(inv?.sgstAmount || 0).toFixed(2)}</strong>
+                      </div>
+                    </>
                   )}
                   {Number(inv?.discountAmount || 0) > 0 && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', color: '#059669' }}>

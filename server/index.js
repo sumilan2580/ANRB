@@ -68,24 +68,27 @@ app.use(express.json());
 // -------------------------------------------------------------
 // GST CALCULATION & NUMBER TO WORDS HELPERS
 // -------------------------------------------------------------
-function calculateGstBreakdown({ taxableAmount, gstPercent = 18, partyState = 'Gujarat', partyGstin = '', isInterState = null }) {
+function calculateGstBreakdown({ taxableAmount, gstPercent = 18, partyState = 'Gujarat', partyGstin = '', isInterState = null, stateCode = '' }) {
   const taxAmt = Number(taxableAmount.toFixed(2));
   const gstPct = Number(gstPercent);
   const totalGst = Number(((taxAmt * gstPct) / 100).toFixed(2));
   const grandTotal = Number((taxAmt + totalGst).toFixed(2));
 
   const company = getCompanySettings();
-  const companyStateCode = String(company.company_state_code || '24').trim();
-  const companyState = String(company.company_state || 'Gujarat').trim().toLowerCase();
+  const companyStateCode = String(company.company_state_code || company.stateCode || '24').trim();
+  const companyState = String(company.company_state || company.state || 'Gujarat').trim().toLowerCase();
 
   let isIntraState = true;
   if (isInterState !== null && isInterState !== undefined) {
     isIntraState = !isInterState;
+  } else if (stateCode && String(stateCode).trim()) {
+    const cleanSc = String(stateCode).trim();
+    isIntraState = (cleanSc === companyStateCode || cleanSc.padStart(2, '0') === companyStateCode.padStart(2, '0'));
   } else {
     const cleanGstin = String(partyGstin || '').trim();
     if (cleanGstin.length >= 2 && /^\d{2}/.test(cleanGstin)) {
       // First 2 digits of GSTIN are legal state code
-      isIntraState = (cleanGstin.substring(0, 2) === companyStateCode);
+      isIntraState = (cleanGstin.substring(0, 2) === companyStateCode || cleanGstin.substring(0, 2) === companyStateCode.padStart(2, '0'));
     } else if (partyState && partyState.trim()) {
       isIntraState = (partyState.trim().toLowerCase() === companyState);
     }
@@ -3417,6 +3420,7 @@ app.post('/api/transactions/sales', checkManagerModule('sales', 'Sales & Tax Inv
       otherCharges = 0,
       roundOff = 0,
       remarks = '',
+      isInterState = null,
       managerName = 'Admin',
       managerId = null,
       deviceId = '',
@@ -3466,8 +3470,9 @@ app.post('/api/transactions/sales', checkManagerModule('sales', 'Sales & Tax Inv
       }
     }
 
+    const finalStateCode = stateCode || cust.state_code || (customerGstin ? customerGstin.slice(0, 2) : '') || '24';
+    const finalGstin = customerGstin || cust.gst_number || '';
     const partyState = cust.state || 'Gujarat';
-    const partyGstin = cust.gst_number || '';
     const isGST = (salesType === 'GST');
 
     let totalTaxable = 0;
@@ -3484,7 +3489,9 @@ app.post('/api/transactions/sales', checkManagerModule('sales', 'Sales & Tax Inv
 
       const lineTaxable = Number(((q * r) - disc).toFixed(2));
       const lineGstPct = isGST ? Number(it.gstPercent !== undefined ? it.gstPercent : (fg.gst_percent || 18)) : 0;
-      const gstData = isGST ? calculateGstBreakdown({ taxableAmount: lineTaxable, gstPercent: lineGstPct, partyState, partyGstin }) : { cgstAmount: 0, sgstAmount: 0, igstAmount: 0, totalGst: 0, grandTotal: lineTaxable };
+      const gstData = isGST
+        ? calculateGstBreakdown({ taxableAmount: lineTaxable, gstPercent: lineGstPct, partyState, partyGstin: finalGstin, stateCode: finalStateCode, isInterState })
+        : { cgstAmount: 0, sgstAmount: 0, igstAmount: 0, totalGst: 0, grandTotal: lineTaxable };
 
       totalTaxable += lineTaxable;
       totalCgst += gstData.cgstAmount;
@@ -3540,13 +3547,13 @@ app.post('/api/transactions/sales', checkManagerModule('sales', 'Sales & Tax Inv
         finalInvoice = await getNextCode(`INV-${yearStr}`, 'sales', 'invoice_number');
       }
       const firstItem = processedLines[0];
+      const totalQty = Number(processedLines.reduce((acc, p) => acc + p.quantity, 0).toFixed(2));
+      const avgRate = totalQty > 0 ? Number((totalTaxable / totalQty).toFixed(2)) : firstItem.rate;
 
-      const finalStateCode = stateCode || cust.state_code || '24';
       const finalRevCharge = reverseCharge || 'No';
       const finalBilling = billingAddress || cust.billing_address || cust.address || '';
       const finalShipping = shippingAddress || cust.shipping_address || finalBilling;
       const finalShipName = shippingName || cust.name || '';
-      const finalGstin = customerGstin || cust.gst_number || '';
       const finalTerms = termsConditions || '';
 
       // 1. Insert header
@@ -3559,7 +3566,7 @@ app.post('/api/transactions/sales', checkManagerModule('sales', 'Sales & Tax Inv
           state_code, reverse_charge, shipping_name, terms_conditions
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
-        saleCode, finalInvoice, date, customerId, firstItem.finishedProductId, firstItem.quantity, firstItem.rate,
+        saleCode, finalInvoice, date, customerId, firstItem.finishedProductId, totalQty, avgRate,
         totalTaxable, firstItem.gstPercent, totalCgst, totalSgst, totalIgst, grandTotal,
         salesType, paymentType, finalGstin, finalBilling, finalShipping,
         billDiscount, billOther, billRound, remarks, finalManagerId, finalManagerName, finalDeviceId,
@@ -3607,8 +3614,8 @@ app.post('/api/transactions/sales', checkManagerModule('sales', 'Sales & Tax Inv
         sale_code: saleCode,
         invoice_number: finalInvoice,
         date,
-        quantity_kg: firstItem.quantity,
-        rate_per_kg: firstItem.rate,
+        quantity_kg: totalQty,
+        rate_per_kg: avgRate,
         taxable_amount: totalTaxable,
         gst_percent: firstItem.gstPercent,
         cgst_amount: totalCgst,
@@ -3678,6 +3685,7 @@ app.put('/api/transactions/sales/:id', requireAdmin, async (req, res) => {
       otherCharges = 0,
       roundOff = 0,
       remarks = '',
+      isInterState,
       items
     } = req.body;
 
@@ -3697,8 +3705,9 @@ app.put('/api/transactions/sales/:id', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Valid Date and at least one item line are required.' });
     }
 
+    const finalStateCode = stateCode !== undefined ? stateCode : (sale.state_code || cust.state_code || '24');
+    const finalGstin = customerGstin !== undefined ? customerGstin : (sale.customer_gstin || cust.gst_number || '');
     const partyState = cust.state || 'Gujarat';
-    const partyGstin = cust.gst_number || '';
     const isGST = (salesType === 'GST');
 
     let totalTaxable = 0;
@@ -3723,7 +3732,9 @@ app.put('/api/transactions/sales/:id', requireAdmin, async (req, res) => {
 
       const lineTaxable = Number(((q * r) - disc).toFixed(2));
       const lineGstPct = isGST ? Number(it.gstPercent !== undefined ? it.gstPercent : (it.gst_percent !== undefined ? it.gst_percent : (fp.gst_percent || 18))) : 0;
-      const gstData = isGST ? calculateGstBreakdown({ taxableAmount: lineTaxable, gstPercent: lineGstPct, partyState, partyGstin }) : { cgstAmount: 0, sgstAmount: 0, igstAmount: 0, totalGst: 0, grandTotal: lineTaxable };
+      const gstData = isGST
+        ? calculateGstBreakdown({ taxableAmount: lineTaxable, gstPercent: lineGstPct, partyState, partyGstin: finalGstin, stateCode: finalStateCode, isInterState })
+        : { cgstAmount: 0, sgstAmount: 0, igstAmount: 0, totalGst: 0, grandTotal: lineTaxable };
 
       totalTaxable += lineTaxable;
       totalCgst += gstData.cgstAmount;
@@ -3795,13 +3806,13 @@ app.put('/api/transactions/sales/:id', requireAdmin, async (req, res) => {
 
       // 3. Update header
       const firstItem = processedLines[0];
+      const totalQty = Number(processedLines.reduce((acc, p) => acc + p.quantity, 0).toFixed(2));
+      const avgRate = totalQty > 0 ? Number((totalTaxable / totalQty).toFixed(2)) : firstItem.rate;
       const finalInvoice = trimmedInvoice || sale.invoice_number;
-      const finalStateCode = stateCode !== undefined ? stateCode : (sale.state_code || cust.state_code || '24');
       const finalRevCharge = reverseCharge !== undefined ? reverseCharge : (sale.reverse_charge || 'No');
       const finalBilling = billingAddress !== undefined ? billingAddress : (sale.billing_address || cust.billing_address || cust.address || '');
       const finalShipping = shippingAddress !== undefined ? shippingAddress : (sale.shipping_address || cust.shipping_address || finalBilling);
       const finalShipName = shippingName !== undefined ? shippingName : (sale.shipping_name || cust.name || '');
-      const finalGstin = customerGstin !== undefined ? customerGstin : (sale.customer_gstin || cust.gst_number || '');
       const finalTerms = termsConditions !== undefined ? termsConditions : (sale.terms_conditions || '');
 
       await db.prepare(`
@@ -3814,7 +3825,7 @@ app.put('/api/transactions/sales/:id', requireAdmin, async (req, res) => {
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).run(
-        date, cust.id, firstItem.finishedProductId, firstItem.quantity, firstItem.rate,
+        date, cust.id, firstItem.finishedProductId, totalQty, avgRate,
         totalTaxable, firstItem.gstPercent, totalCgst, totalSgst, totalIgst, grandTotal,
         salesType, paymentType, finalGstin, finalBilling, finalShipping,
         billDiscount, billOther, billRound, finalInvoice, remarks,
