@@ -1696,7 +1696,7 @@ app.get('/api/attendance/summary', async (req, res) => {
 // -------------------------------------------------------------
 // COMPANY SETTINGS API
 // -------------------------------------------------------------
-app.get('/api/company/settings', requireAdmin, async (req, res) => {
+app.get('/api/company/settings', async (req, res) => {
   try {
     res.json(getCompanySettings());
   } catch (err) {
@@ -4201,7 +4201,7 @@ app.get('/api/managers/activity', requireAdmin, async (req, res) => {
 });
 
 // Today's entries for the current manager's mobile app
-app.get('/api/managers/my-entries', requireAdmin, async (req, res) => {
+app.get('/api/managers/my-entries', async (req, res) => {
   try {
     const managerName = req.query.managerName || 'Admin';
 

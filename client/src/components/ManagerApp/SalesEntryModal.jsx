@@ -226,7 +226,10 @@ export default function SalesEntryModal({ isOpen, initialSale, onClose, onSucces
       const [custs, fgs, comp] = await Promise.all([
         api.getCustomers(),
         api.getFinishedGoods(),
-        api.getCompanySettings ? api.getCompanySettings() : Promise.resolve(null)
+        api.getCompanySettings ? api.getCompanySettings().catch(err => {
+          console.warn('Failed to fetch company settings:', err.message);
+          return null;
+        }) : Promise.resolve(null)
       ]);
       const activeCusts = (custs || []).filter(c => c.status === 'active');
       const activeFGs = (fgs || []).filter(f => f.status === 'active');
