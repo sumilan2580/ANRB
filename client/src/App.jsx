@@ -1,11 +1,49 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { LogOut, ShieldCheck, UserCheck } from 'lucide-react';
 import AdminPanel from './components/AdminPanel/AdminPanel';
 import AdminLogin from './components/AdminPanel/AdminLogin';
 import ManagerPanel from './components/AdminPanel/ManagerPanel';
+import SuspendedDemoPage from './components/SuspendedPage/SuspendedDemoPage';
 import { session, api } from './api';
 
 export default function App() {
+  const [isSuspendedView, setIsSuspendedView] = useState(() => {
+    const path = window.location.pathname.toLowerCase();
+    const hash = window.location.hash.toLowerCase();
+    const search = window.location.search.toLowerCase();
+    return (
+      path.includes('suspended') ||
+      path.includes('expired') ||
+      hash.includes('suspended') ||
+      hash.includes('expired') ||
+      search.includes('suspended') ||
+      search.includes('expired')
+    );
+  });
+
+  useEffect(() => {
+    const checkRoute = () => {
+      const path = window.location.pathname.toLowerCase();
+      const hash = window.location.hash.toLowerCase();
+      const search = window.location.search.toLowerCase();
+      setIsSuspendedView(
+        path.includes('suspended') ||
+        path.includes('expired') ||
+        hash.includes('suspended') ||
+        hash.includes('expired') ||
+        search.includes('suspended') ||
+        search.includes('expired')
+      );
+    };
+
+    window.addEventListener('popstate', checkRoute);
+    window.addEventListener('hashchange', checkRoute);
+    return () => {
+      window.removeEventListener('popstate', checkRoute);
+      window.removeEventListener('hashchange', checkRoute);
+    };
+  }, []);
+
   const [user, setUser] = useState(() => {
     // Read from new tripal_session key (set by updated login)
     const s = session.get();
@@ -39,9 +77,30 @@ export default function App() {
     setUser(null);
   };
 
+  // Dedicated Demo Suspended Page View
+  if (isSuspendedView) {
+    return (
+      <SuspendedDemoPage
+        onBackToLogin={() => {
+          window.history.pushState(null, '', '/');
+          window.location.hash = '';
+          setIsSuspendedView(false);
+        }}
+      />
+    );
+  }
+
   // Not logged in — show unified login screen
   if (!user) {
-    return <AdminLogin onLoginSuccess={handleLoginSuccess} />;
+    return (
+      <AdminLogin
+        onLoginSuccess={handleLoginSuccess}
+        onOpenSuspendedDemo={() => {
+          window.history.pushState(null, '', '/suspended');
+          setIsSuspendedView(true);
+        }}
+      />
+    );
   }
 
   const isAdmin = user.role === 'admin';

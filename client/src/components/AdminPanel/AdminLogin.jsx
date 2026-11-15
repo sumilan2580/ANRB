@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { ShieldCheck, UserCheck, Lock, User, Eye, EyeOff, AlertCircle, ArrowRight } from 'lucide-react';
+import { ShieldCheck, UserCheck, Lock, User, Eye, EyeOff, AlertCircle, ArrowRight, ShieldAlert } from 'lucide-react';
 import { api } from '../../api';
 
-export default function AdminLogin({ onLoginSuccess }) {
+export default function AdminLogin({ onLoginSuccess, onOpenSuspendedDemo }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -224,6 +224,44 @@ export default function AdminLogin({ onLoginSuccess }) {
             </div>
             <div style={{ fontSize: '10.5px', color: '#475569' }}>Entry only · No edit/delete</div>
           </div>
+        </div>
+
+        {/* Discreet Demo Link */}
+        <div style={{ marginTop: '20px', textAlign: 'center' }}>
+          <button
+            type="button"
+            onClick={() => {
+              if (onOpenSuspendedDemo) {
+                onOpenSuspendedDemo();
+              } else {
+                window.location.hash = '#suspended';
+              }
+            }}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: '#64748b',
+              fontSize: '11.5px',
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '6px 12px',
+              borderRadius: '6px',
+              transition: 'all 0.2s ease'
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = '#f87171';
+              e.currentTarget.style.background = 'rgba(239, 68, 68, 0.08)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = '#64748b';
+              e.currentTarget.style.background = 'transparent';
+            }}
+          >
+            <ShieldAlert size={13} />
+            <span>Preview: Hosting Plan Suspended Notice</span>
+          </button>
         </div>
       </div>
     </div>
