@@ -6,41 +6,45 @@ import ManagerPanel from './components/AdminPanel/ManagerPanel';
 import SuspendedDemoPage from './components/SuspendedPage/SuspendedDemoPage';
 import { session, api } from './api';
 
+function checkSuspended() {
+  const path = window.location.pathname.toLowerCase();
+  const hash = window.location.hash.toLowerCase();
+  const search = window.location.search.toLowerCase();
+
+  // Explicit bypass to access ERP admin/login:
+  // Visiting /login, /admin, #login, #admin, or ?admin=true, or unlocked in localStorage
+  const isExplicitBypass =
+    path === '/login' ||
+    path.startsWith('/login') ||
+    path === '/admin' ||
+    path.startsWith('/admin') ||
+    hash === '#login' ||
+    hash === '#admin' ||
+    search.includes('admin=true') ||
+    search.includes('login=true') ||
+    localStorage.getItem('anrb_admin_unlocked') === 'true';
+
+  if (isExplicitBypass) {
+    return false; // Show normal Login / ERP
+  }
+
+  // DEFAULT FOR MAIN PAGE (https://anrb1.netlify.app/): SUSPENDED!
+  return true;
+}
+
 export default function App() {
-  const [isSuspendedView, setIsSuspendedView] = useState(() => {
-    const path = window.location.pathname.toLowerCase();
-    const hash = window.location.hash.toLowerCase();
-    const search = window.location.search.toLowerCase();
-    return (
-      path.includes('suspended') ||
-      path.includes('expired') ||
-      hash.includes('suspended') ||
-      hash.includes('expired') ||
-      search.includes('suspended') ||
-      search.includes('expired')
-    );
-  });
+  const [isSuspendedView, setIsSuspendedView] = useState(checkSuspended);
 
   useEffect(() => {
-    const checkRoute = () => {
-      const path = window.location.pathname.toLowerCase();
-      const hash = window.location.hash.toLowerCase();
-      const search = window.location.search.toLowerCase();
-      setIsSuspendedView(
-        path.includes('suspended') ||
-        path.includes('expired') ||
-        hash.includes('suspended') ||
-        hash.includes('expired') ||
-        search.includes('suspended') ||
-        search.includes('expired')
-      );
+    const handleRoute = () => {
+      setIsSuspendedView(checkSuspended());
     };
 
-    window.addEventListener('popstate', checkRoute);
-    window.addEventListener('hashchange', checkRoute);
+    window.addEventListener('popstate', handleRoute);
+    window.addEventListener('hashchange', handleRoute);
     return () => {
-      window.removeEventListener('popstate', checkRoute);
-      window.removeEventListener('hashchange', checkRoute);
+      window.removeEventListener('popstate', handleRoute);
+      window.removeEventListener('hashchange', handleRoute);
     };
   }, []);
 
@@ -79,7 +83,13 @@ export default function App() {
 
   // Dedicated Suspended Page View
   if (isSuspendedView) {
-    return <SuspendedDemoPage />;
+    return (
+      <SuspendedDemoPage
+        onUnlockAdmin={() => {
+          setIsSuspendedView(false);
+        }}
+      />
+    );
   }
 
   // Not logged in — show unified login screen

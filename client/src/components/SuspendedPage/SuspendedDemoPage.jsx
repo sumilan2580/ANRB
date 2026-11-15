@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Globe, 
   Lock, 
@@ -13,9 +13,19 @@ import {
   Copy
 } from 'lucide-react';
 
-export default function SuspendedDemoPage() {
+export default function SuspendedDemoPage({ onUnlockAdmin }) {
   const [copied, setCopied] = useState(false);
   const [showContactModal, setShowContactModal] = useState(false);
+  const [secretClicks, setSecretClicks] = useState(0);
+
+  // Set document title & warning favicon on mount to make it 100% genuine
+  useEffect(() => {
+    document.title = 'Website Suspended: Hosting Plan Expired';
+    const link = document.querySelector("link[rel*='icon']");
+    if (link) {
+      link.href = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23ef4444'%3E%3Cpath d='M12 2L1 21h22L12 2zm1 14h-2v-2h2v2zm0-4h-2V8h2v4z'/%3E%3C/svg%3E";
+    }
+  }, []);
 
   // Netlify direct target URL as requested by the user
   const netlifyRedirectUrl = 'https://app.netlify.com/';
@@ -29,6 +39,22 @@ export default function SuspendedDemoPage() {
     navigator.clipboard.writeText('ERR_HOSTING_SUB_EXPIRED_402');
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  // Secret unlock for owner/developer: Click Ray ID 5 times to reveal login
+  const handleSecretClick = () => {
+    const next = secretClicks + 1;
+    if (next >= 5) {
+      localStorage.setItem('anrb_admin_unlocked', 'true');
+      if (onUnlockAdmin) {
+        onUnlockAdmin();
+      } else {
+        window.location.href = '/login';
+      }
+    } else {
+      setSecretClicks(next);
+      setTimeout(() => setSecretClicks(0), 3000);
+    }
   };
 
   const formattedDate = new Intl.DateTimeFormat('en-US', {
@@ -76,7 +102,7 @@ export default function SuspendedDemoPage() {
           <span style={{ color: '#94a3b8' }}>NODE: SNT-EDGE-APEX-01</span>
         </div>
 
-        {/* Right: HTTP 402 Suspended Badge + Date */}
+        {/* Right: HTTP 402 Suspended Badge + Date (Clean, NO Back to Login button) */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
           <div style={{
             display: 'inline-flex',
@@ -305,7 +331,7 @@ export default function SuspendedDemoPage() {
             alignItems: 'center',
             gap: '12px'
           }}>
-            {/* Primary Button: Direct Redirect to Netlify */}
+            {/* Primary Button: Direct Redirect to https://app.netlify.com/ */}
             <button
               onClick={handleUpdatePlan}
               id="update-hosting-plan-btn"
@@ -381,9 +407,14 @@ export default function SuspendedDemoPage() {
         fontSize: '11px',
         fontFamily: "'JetBrains Mono', monospace",
         color: '#475569',
-        lineHeight: '1.6'
+        lineHeight: '1.6',
+        userSelect: 'none'
       }}>
-        <div>
+        <div 
+          onClick={handleSecretClick}
+          title=""
+          style={{ cursor: 'default' }}
+        >
           Server IP: 75.2.60.5 &nbsp;•&nbsp; Security Gateway: WAF Active &nbsp;•&nbsp; Ray ID: snt-edge-402-94e27e8f
         </div>
         <div style={{ color: '#334155', fontSize: '10.5px', marginTop: '2px' }}>
