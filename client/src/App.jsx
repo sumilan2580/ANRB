@@ -77,30 +77,14 @@ export default function App() {
     setUser(null);
   };
 
-  // Dedicated Demo Suspended Page View
+  // Dedicated Suspended Page View
   if (isSuspendedView) {
-    return (
-      <SuspendedDemoPage
-        onBackToLogin={() => {
-          window.history.pushState(null, '', '/');
-          window.location.hash = '';
-          setIsSuspendedView(false);
-        }}
-      />
-    );
+    return <SuspendedDemoPage />;
   }
 
   // Not logged in — show unified login screen
   if (!user) {
-    return (
-      <AdminLogin
-        onLoginSuccess={handleLoginSuccess}
-        onOpenSuspendedDemo={() => {
-          window.history.pushState(null, '', '/suspended');
-          setIsSuspendedView(true);
-        }}
-      />
-    );
+    return <AdminLogin onLoginSuccess={handleLoginSuccess} />;
   }
 
   const isAdmin = user.role === 'admin';

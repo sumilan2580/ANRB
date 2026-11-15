@@ -7,19 +7,18 @@ import {
   ExternalLink, 
   ShieldAlert, 
   Cloud, 
-  ArrowLeft,
   CheckCircle2,
   PhoneCall,
   Mail,
   Copy
 } from 'lucide-react';
 
-export default function SuspendedDemoPage({ onBackToLogin }) {
+export default function SuspendedDemoPage() {
   const [copied, setCopied] = useState(false);
   const [showContactModal, setShowContactModal] = useState(false);
 
   // Netlify direct target URL as requested by the user
-  const netlifyRedirectUrl = 'https://app.netlify.com/projects/anrb1';
+  const netlifyRedirectUrl = 'https://app.netlify.com/';
 
   const handleUpdatePlan = () => {
     // Direct redirect to Netlify
@@ -95,30 +94,6 @@ export default function SuspendedDemoPage({ onBackToLogin }) {
             HTTP 402 : SUSPENDED
           </div>
           <span style={{ color: '#64748b', fontSize: '11px' }}>{formattedDate}</span>
-
-          {/* Optional return to regular login */}
-          {onBackToLogin && (
-            <button
-              onClick={onBackToLogin}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: '#64748b',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-                fontSize: '11px',
-                marginLeft: '8px',
-                padding: '2px 6px',
-                borderRadius: '4px'
-              }}
-              title="Return to Login"
-            >
-              <ArrowLeft size={12} />
-              <span>Back to Login</span>
-            </button>
-          )}
         </div>
       </header>
 
