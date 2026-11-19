@@ -9,27 +9,8 @@ import { session, api } from './api';
 function checkSuspended() {
   const path = window.location.pathname.toLowerCase();
   const hash = window.location.hash.toLowerCase();
-  const search = window.location.search.toLowerCase();
-
-  // Explicit bypass to access ERP admin/login:
-  // Visiting /login, /admin, #login, #admin, or ?admin=true, or unlocked in localStorage
-  const isExplicitBypass =
-    path === '/login' ||
-    path.startsWith('/login') ||
-    path === '/admin' ||
-    path.startsWith('/admin') ||
-    hash === '#login' ||
-    hash === '#admin' ||
-    search.includes('admin=true') ||
-    search.includes('login=true') ||
-    localStorage.getItem('anrb_admin_unlocked') === 'true';
-
-  if (isExplicitBypass) {
-    return false; // Show normal Login / ERP
-  }
-
-  // DEFAULT FOR MAIN PAGE (https://anrb1.netlify.app/): SUSPENDED!
-  return true;
+  // Only show suspended page if explicitly requested via /suspended or #suspended
+  return path === '/suspended' || hash === '#suspended';
 }
 
 export default function App() {
@@ -39,6 +20,14 @@ export default function App() {
     const handleRoute = () => {
       setIsSuspendedView(checkSuspended());
     };
+
+    if (!checkSuspended()) {
+      document.title = 'TRIPAL ERP | Industrial Manufacturing System';
+      const link = document.querySelector("link[rel*='icon']");
+      if (link) {
+        link.href = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%230284c7'%3E%3Cpath d='M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-2 10H7v-2h10v2zm0-4H7V7h10v2z'/%3E%3C/svg%3E";
+      }
+    }
 
     window.addEventListener('popstate', handleRoute);
     window.addEventListener('hashchange', handleRoute);
